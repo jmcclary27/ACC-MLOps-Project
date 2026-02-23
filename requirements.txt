@@ -1,0 +1,70 @@
+# -------------------------
+# Core Python / Utilities
+# -------------------------
+numpy>=1.26.0
+pandas>=2.1.0
+scipy>=1.11.0
+pyyaml>=6.0.1
+python-dotenv>=1.0.1
+tqdm>=4.66.1
+
+# -------------------------
+# Machine Learning
+# -------------------------
+scikit-learn>=1.4.0
+xgboost>=2.0.3
+lightgbm>=4.2.0
+
+# -------------------------
+# Deep Learning / NLP
+# -------------------------
+torch>=2.1.0
+transformers>=4.38.0
+sentence-transformers>=2.6.0
+datasets>=2.17.0
+accelerate>=0.26.0
+evaluate>=0.4.1
+
+# -------------------------
+# Experiment Tracking / MLOps
+# -------------------------
+mlflow>=2.10.0
+dvc>=3.38.0
+dvc[s3]>=3.38.0
+dvc[gdrive]>=3.38.0
+
+# -------------------------
+# API Layer
+# -------------------------
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.6.0
+
+# -------------------------
+# Database / Storage
+# -------------------------
+sqlalchemy>=2.0.25
+psycopg2-binary>=2.9.9
+redis>=5.0.1
+
+# -------------------------
+# Monitoring / Validation
+# -------------------------
+great-expectations>=0.18.8
+evidently>=0.4.12
+
+# -------------------------
+# Testing / Quality
+# -------------------------
+pytest>=8.0.0
+pytest-cov>=4.1.0
+ruff>=0.2.2
+mypy>=1.8.0
+pre-commit>=3.6.0
+
+# -------------------------
+# Visualization (Optional but useful)
+# -------------------------
+matplotlib>=3.8.0
+seaborn>=0.13.0
+plotly>=5.19.0
