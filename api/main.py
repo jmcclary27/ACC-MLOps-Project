@@ -20,8 +20,7 @@ class DocumentRequest(BaseModel):
 @app.post("/clauses")
 def process_clauses(request: DocumentRequest):
     """
-    Takes a block of text, splits it into sentences, and returns a mock 
-    classification label and confidence score for each sentence.
+    Takes a block of text and returns a mock label and confidence score for each sentence.
     """
     # test sentence split
     sentences = request.text.split(".")
