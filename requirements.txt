@@ -28,11 +28,11 @@ evaluate>=0.4.1
 # -------------------------
 # Text Manipulation
 # -------------------------
-pymupdf4llm=0.3.4
-pymupdf-layout=1.27.1
-spacy=3.8.11
+pymupdf4llm>=0.3.4
+pymupdf-layout>=1.27.1
+spacy>=3.8.11
 # python -m spacy download en_core_web_sm
-anyascii=0.3.3
+anyascii>=0.3.3
 
 # -------------------------
 # Experiment Tracking / MLOps
