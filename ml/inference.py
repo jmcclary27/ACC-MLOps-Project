@@ -1,13 +1,10 @@
 """
-Inference utilities for contract clause classification.
+Document-level inference utilities for contract clause classification.
 
-This module provides a simple inference pipeline:
-1. Split incoming contract text into sentence-like chunks
-2. Run each chunk through the model loader
-3. Return structured predictions
-
-For now, this works with the mock model_loader implementation.
-Later, you can replace model_loader.predict_clause() with real Hugging Face inference.
+This module:
+- splits contract text into clause-like chunks
+- runs batch inference through api.model_loader
+- returns structured per-clause predictions
 """
 
 from __future__ import annotations
@@ -15,40 +12,40 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from api.model_loader import predict_clause
+from api.model_loader import predict_clauses
 
 
 def split_into_clauses(text: str) -> list[str]:
     """
-    Split a contract into simple clause-like segments.
+    Split contract text into simple clause-like segments.
 
-    Right now this uses a lightweight regex split on punctuation and newlines.
-    Later, you can replace this with spaCy sentence segmentation or legal clause parsing.
+    Current strategy:
+    - split on sentence-ending punctuation followed by whitespace
+    - split on one or more newlines
+    - remove empty chunks
 
-    Args:
-        text: Full contract text
-
-    Returns:
-        List of cleaned clause/sentence strings
+    Later, this can be replaced with smarter legal clause segmentation.
     """
     if not text or not text.strip():
         return []
 
-    # Split on:
-    # - sentence punctuation followed by whitespace
-    # - blank lines
     raw_parts = re.split(r"(?<=[.!?])\s+|\n+", text)
-
     clauses = [part.strip() for part in raw_parts if part.strip()]
     return clauses
 
 
-def predict_document(text: str) -> list[dict[str, Any]]:
+def predict_document(
+    text: str,
+    max_length: int = 512,
+    batch_size: int = 16,
+) -> list[dict[str, Any]]:
     """
-    Run clause prediction across an entire document.
+    Run inference over a full document.
 
     Args:
-        text: Full contract text
+        text: Full document text
+        max_length: Max token length passed to tokenizer
+        batch_size: Batch size for model inference
 
     Returns:
         A list of dictionaries containing:
@@ -57,10 +54,17 @@ def predict_document(text: str) -> list[dict[str, Any]]:
         - confidence
     """
     clauses = split_into_clauses(text)
+    if not clauses:
+        return []
+
+    predictions = predict_clauses(
+        clauses,
+        max_length=max_length,
+        batch_size=batch_size,
+    )
 
     results: list[dict[str, Any]] = []
-    for clause in clauses:
-        prediction = predict_clause(clause)
+    for clause, prediction in zip(clauses, predictions):
         results.append(
             {
                 "sentence": clause,
