@@ -12,6 +12,10 @@ export default function DocumentPage({
   onBack,
 }) {
   const results = apiResults?.results || [];
+  const CONFIDENCE_THRESHOLD = 0.80;
+  const highConfidenceResults = results.filter(
+    (r) => r.confidence >= CONFIDENCE_THRESHOLD
+  );
 
   return (
     <div className="h-screen bg-white flex flex-col">
@@ -70,7 +74,7 @@ export default function DocumentPage({
               </div>
             )}
 
-            {results.map((item, index) => (
+            {highConfidenceResults.map((item, index) => (
               <div
                 key={`${index}-${item.sentence?.slice(0, 20) || 'clause'}`}
                 className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
