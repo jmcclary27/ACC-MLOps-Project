@@ -1,53 +1,79 @@
 """
 Model Loader Module
 
-This module is responsible for loading the trained HuggingFace model and 
-making predictions. Currently, it uses placeholder/mock code until the 
-"Select Pretrained Model" task is completed.
+This module is responsible for loading the trained model and
+making predictions. It currently uses mock logic, but the structure
+is ready to be replaced with real Hugging Face inference later.
 """
-import logging
 
-# Configure basic logging
+from __future__ import annotations
+
+import logging
+from typing import Any
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Placeholders for the actual model and tokenizer
-_model = None
-_tokenizer = None
+_model: Any = None
+_tokenizer: Any = None
 
-def load_model():
+
+def load_model() -> None:
     """
-    Simulates loading a trained HuggingFace model.
+    Load the model and tokenizer into memory once.
+
+    Later, replace this with actual Hugging Face loading logic, for example:
+        AutoTokenizer.from_pretrained(...)
+        AutoModelForSequenceClassification.from_pretrained(...)
     """
     global _model, _tokenizer
-    logger.info("Loading HuggingFace model (mock)...")
-    
-    # TODO: Replace with actual model loading logic once model selection is done, e.g.:
-    
+
+    if _model is not None and _tokenizer is not None:
+        return
+
+    logger.info("Loading model and tokenizer...")
     _model = "mock_model"
     _tokenizer = "mock_tokenizer"
     logger.info("Model loaded successfully.")
 
-def predict_clause(text: str) -> dict:
+
+def predict_clause(text: str) -> dict[str, float | str]:
     """
-    Predicts the classification for a given text clause.
-    
+    Predict the class of a single clause.
+
     Args:
-        text (str): The input text to classify.
-        
+        text: Clause text
+
     Returns:
-        dict: A dictionary containing the prediction label and confidence score.
+        Dictionary with label and confidence
     """
     if _model is None or _tokenizer is None:
-        # Ensure the model is loaded before predicting
         load_model()
-        
-    logger.info(f"Making prediction for text: '{text[:30]}...'")
-    
-    # TODO: Replace with actual model inference logic.
-    
-    # For now, return the requested mock response
+
+    clean_text = text.strip()
+    logger.info("Making prediction for text: '%s...'", clean_text[:50])
+
+    # Temporary mock logic
+    # Replace this with real tokenization + model inference later
+    if "terminate" in clean_text.lower():
+        return {
+            "label": "termination",
+            "confidence": 0.94,
+        }
+
+    if "confidential" in clean_text.lower() or "non-disclosure" in clean_text.lower():
+        return {
+            "label": "confidentiality",
+            "confidence": 0.96,
+        }
+
+    if "pay" in clean_text.lower() or "payment" in clean_text.lower():
+        return {
+            "label": "payment",
+            "confidence": 0.93,
+        }
+
     return {
-        "label": "acceptable", 
-        "confidence": 0.92
+        "label": "acceptable",
+        "confidence": 0.91,
     }
