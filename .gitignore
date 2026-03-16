@@ -5,3 +5,9 @@ node_modules/
 __pycache__/
 *.pyc
 *.pyo
+
+# mlflow
+mlruns/
+ml/data/processed/distilbert_*
+ml/models/*
+!ml/models/.gitkeep

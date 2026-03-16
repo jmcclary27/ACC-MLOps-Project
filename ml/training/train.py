@@ -223,12 +223,10 @@ def main():
         label2id=label2id,
     )
 
-    # Local MLflow is fine for now
     mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
 
     training_args = TrainingArguments(
         output_dir=str(MODEL_OUTPUT_DIR / "checkpoints"),
-        overwrite_output_dir=True,
         eval_strategy="epoch",
         save_strategy="epoch",
         logging_strategy="epoch",
@@ -252,7 +250,7 @@ def main():
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         compute_metrics=compute_metrics_factory(id2label),
         callbacks=[EarlyStoppingCallback(early_stopping_patience=EARLY_STOPPING_PATIENCE)],
     )
