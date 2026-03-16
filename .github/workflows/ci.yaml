@@ -32,6 +32,9 @@ jobs:
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
           pip install pytest ruff
 
+      - name: Install spaCy English model
+        run: python -m spacy download en_core_web_sm
+
       - name: Show Python version
         run: python --version
 
