@@ -9,14 +9,41 @@ export default function App() {
 
   const fileInputRef = useRef(null);
 
-  const handleFileChange = (e) => {
+  const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setUploadedFile(file.name);
     const url = URL.createObjectURL(file);
     setFileURL(url);
-    setView("viewer");
+
+    setLoading(true);
+    setError(null);
+    setApiResults(null);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const response = await fetch("http://127.0.0.1:8000/upload-contract", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.json();
+        throw new Error(err.detail || "Upload failed");
+      }
+
+      const data = await response.json();
+      setApiResults(data);
+      setView("viewer");
+    } catch (err) {
+      setError(err.message || "Something went wrong");
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleBack = () => {
