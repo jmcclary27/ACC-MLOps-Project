@@ -13,6 +13,20 @@ This guide covers:
 
 ---
 
+# Run Frontend & Backend
+
+Backend:
+```bash
+uvicorn api.main:app --reload
+```
+
+Frontend:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
 # Initial Setup (First Time Only)
 
 Clone the repository:
