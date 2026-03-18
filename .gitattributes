@@ -8,3 +8,4 @@ ml/models/distilbert_clause_classifier filter=lfs diff=lfs merge=lfs -text
 *.bin filter=lfs diff=lfs merge=lfs -text
 *.csv filter=lfs diff=lfs merge=lfs -text
 *.json filter=lfs diff=lfs merge=lfs -text
+mlruns/** filter=lfs diff=lfs merge=lfs -text
