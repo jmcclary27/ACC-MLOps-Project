@@ -77,6 +77,7 @@ def process_clauses(request: DocumentRequest) -> dict[str, object]:
 
     return {
         "source_type": "text",
+        "extracted_text": clean_text,
         "num_predictions": len(results),
         "results": results,
     }
@@ -178,6 +179,7 @@ async def upload_contract(file: UploadFile = File(...)) -> dict[str, object]:
     return {
         "source_type": "file",
         "filename": file.filename,
+        "extracted_text": extracted_text,
         "extracted_text_length": len(extracted_text),
         "num_predictions": len(results),
         "results": results,

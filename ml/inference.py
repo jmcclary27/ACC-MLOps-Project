@@ -15,7 +15,29 @@ from typing import Any
 from api.model_loader import predict_clauses
 
 
-def split_into_clauses(text: str) -> list[str]:
+def _append_chunk_with_offsets(
+    text: str,
+    chunks: list[dict[str, int | str]],
+    start: int,
+    end: int,
+) -> None:
+    """Trim boundary whitespace while preserving original character offsets."""
+    while start < end and text[start].isspace():
+        start += 1
+    while end > start and text[end - 1].isspace():
+        end -= 1
+
+    if start < end:
+        chunks.append(
+            {
+                "text": text[start:end],
+                "start_char": start,
+                "end_char": end,
+            }
+        )
+
+
+def split_into_clauses(text: str) -> list[dict[str, int | str]]:
     """
     Split contract text into simple clause-like segments.
 
@@ -29,9 +51,16 @@ def split_into_clauses(text: str) -> list[str]:
     if not text or not text.strip():
         return []
 
-    raw_parts = re.split(r"(?<=[.!?])\s+|\n+", text)
-    clauses = [part.strip() for part in raw_parts if part.strip()]
-    return clauses
+    separator_pattern = re.compile(r"(?<=[.!?])\s+|\n+")
+    chunks: list[dict[str, int | str]] = []
+
+    cursor = 0
+    for match in separator_pattern.finditer(text):
+        _append_chunk_with_offsets(text, chunks, cursor, match.start())
+        cursor = match.end()
+
+    _append_chunk_with_offsets(text, chunks, cursor, len(text))
+    return chunks
 
 
 def predict_document(
@@ -53,21 +82,27 @@ def predict_document(
         - label
         - confidence
     """
-    clauses = split_into_clauses(text)
-    if not clauses:
+    clause_chunks = split_into_clauses(text)
+    if not clause_chunks:
         return []
 
+    clause_texts = [str(chunk["text"]) for chunk in clause_chunks]
+
     predictions = predict_clauses(
-        clauses,
+        clause_texts,
         max_length=max_length,
         batch_size=batch_size,
     )
 
     results: list[dict[str, Any]] = []
-    for clause, prediction in zip(clauses, predictions):
+    for chunk, prediction in zip(clause_chunks, predictions):
         results.append(
             {
-                "sentence": clause,
+                "text": chunk["text"],
+                # Keep sentence for backward compatibility with existing frontend paths.
+                "sentence": chunk["text"],
+                "start_char": int(chunk["start_char"]),
+                "end_char": int(chunk["end_char"]),
                 "label": prediction["label"],
                 "confidence": prediction["confidence"],
             }

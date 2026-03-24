@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
+import PDFViewer from './PDFViewer';
 
 function formatConfidence(value) {
   if (typeof value !== 'number') return 'N/A';
@@ -11,11 +12,37 @@ export default function DocumentPage({
   apiResults,
   onBack,
 }) {
+  const [activeClauseId, setActiveClauseId] = useState(null);
   const results = apiResults?.results || [];
+  const extractedText = apiResults?.extracted_text || '';
   const CONFIDENCE_THRESHOLD = 0.80;
-  const highConfidenceResults = results.filter(
-    (r) => r.confidence >= CONFIDENCE_THRESHOLD
+
+  const highConfidenceResults = useMemo(
+    () =>
+      results
+        .map((result, index) => ({
+          ...result,
+          text: result.text || result.sentence || '',
+          clauseId: index,
+          sourceIndex: index,
+        }))
+        .filter((r) => r.confidence >= CONFIDENCE_THRESHOLD),
+    [results]
   );
+
+  const groupedByLabel = useMemo(() => {
+    const groups = new Map();
+
+    highConfidenceResults.forEach((item) => {
+      const existing = groups.get(item.label) || [];
+      existing.push(item);
+      groups.set(item.label, existing);
+    });
+
+    return [...groups.entries()]
+      .map(([label, items]) => ({ label, items }))
+      .sort((a, b) => b.items.length - a.items.length || a.label.localeCompare(b.label));
+  }, [highConfidenceResults]);
 
   return (
     <div className="h-screen bg-white flex flex-col">
@@ -41,10 +68,11 @@ export default function DocumentPage({
       <div className="flex flex-1 min-h-0">
         <main className="flex-1 bg-white overflow-auto border-r border-slate-200">
           {fileURL ? (
-            <iframe
-              src={fileURL}
-              className="w-full h-full"
-              title="Uploaded Document"
+            <PDFViewer
+              fileURL={fileURL}
+              extractedText={extractedText}
+              chunks={highConfidenceResults}
+              activeClauseId={activeClauseId}
             />
           ) : (
             <div className="flex items-center justify-center h-full">
@@ -57,7 +85,7 @@ export default function DocumentPage({
           <div className="p-5 border-b border-slate-200 bg-white sticky top-0">
             <h2 className="text-xl font-semibold text-slate-900">Model Results</h2>
             <p className="text-sm text-slate-600 mt-1">
-              Clause predictions returned by the API
+              Grouped by label and sorted by count
             </p>
           </div>
 
@@ -74,25 +102,35 @@ export default function DocumentPage({
               </div>
             )}
 
-            {highConfidenceResults.map((item, index) => (
-              <div
-                key={`${index}-${item.sentence?.slice(0, 20) || 'clause'}`}
-                className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
-              >
-                <div className="flex items-start justify-between gap-3 mb-3">
-                  <span className="inline-flex rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-700">
-                    {item.label}
-                  </span>
-                  <span className="text-sm font-medium text-slate-500">
-                    {formatConfidence(item.confidence)}
-                  </span>
+            {apiResults && groupedByLabel.map((group) => (
+              <div key={group.label} className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div className="px-4 py-3 border-b border-slate-100 bg-slate-50">
+                  <p className="text-sm font-semibold text-slate-900">
+                    {group.label} ({group.items.length})
+                  </p>
                 </div>
 
-                <p className="text-sm leading-6 text-slate-800">
-                  {item.sentence}
-                </p>
+                <div className="divide-y divide-slate-100">
+                  {group.items.map((item) => (
+                    <button
+                      key={`nav-${item.clauseId}`}
+                      type="button"
+                      onClick={() => setActiveClauseId(item.clauseId)}
+                      className={`w-full text-left px-4 py-3 transition-colors text-slate-800 ${
+                        activeClauseId === item.clauseId ? 'bg-blue-50' : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <p className="text-xs text-slate-500 mb-1">
+                        Clause {item.sourceIndex + 1} • {formatConfidence(item.confidence)}
+                      </p>
+                      <p className="text-sm leading-5 line-clamp-2">{item.text}</p>
+                    </button>
+                  ))}
+                </div>
               </div>
             ))}
+
+
           </div>
         </aside>
       </div>
