@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from api.model_loader import predict_clauses
-from ml.text_helpers import chunk_legal_text_with_offsets
+from ml.data.text_helpers import chunk_legal_text_with_offsets
 
 
 def merge_adjacent_predictions(

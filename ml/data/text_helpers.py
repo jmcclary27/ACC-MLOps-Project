@@ -58,12 +58,43 @@ def normalize_chunk_text(text: str) -> str:
     return text.strip()
 
 
+def strip_extraction_noise(text: str) -> str:
+    """
+    Remove recurring extraction artifacts such as SEC page footers and
+    standalone page numbers before chunking.
+    """
+    lines = text.splitlines()
+    cleaned_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        if not stripped:
+            cleaned_lines.append(line)
+            continue
+
+        # SEC / filing footer noise
+        if re.search(r"Source:\s+.*10-K", stripped, re.IGNORECASE):
+            continue
+
+        # Lines like "8 Source: FUSE MEDICAL..."
+        if re.match(r"^\d+\s+Source:", stripped, re.IGNORECASE):
+            continue
+
+        # Standalone page numbers
+        if re.match(r"^\d{1,3}$", stripped):
+            continue
+
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines)
+
+
 def is_header_like(text: str) -> bool:
     stripped = text.strip()
     if not stripped:
         return False
 
-    # Common legal heading patterns
     if re.match(r"^\d+(\.\d+)*\.?\s+[A-Z][A-Za-z/&,\-() ]+$", stripped):
         return True
 
@@ -84,6 +115,20 @@ def is_header_like(text: str) -> bool:
         "confidentiality",
         "governing law and jurisdiction",
         "notices",
+        "variation",
+        "waiver",
+        "severance",
+        "entire agreement",
+        "third party rights",
+        "no partnership or agency",
+        "counterparts",
+        "trade marks and intellectual property",
+        "product liability and insurance",
+        "advertising and promotion",
+        "anti-bribery compliance",
+        "supply of products",
+        "supplier's undertakings",
+        "distributor's undertakings",
     }
     if stripped.lower() in known_headers:
         return True
@@ -95,12 +140,12 @@ def is_enumeration_marker(text: str) -> bool:
     stripped = text.strip()
 
     patterns = [
-        r"^\d+(\.\d+)*\.?$",   # 1, 1., 1.1, 2.4
-        r"^\(?[a-zA-Z]\)$",    # (a)
-        r"^\(?[ivxlcdmIVXLCDM]+\)$",  # (i), (ii)
-        r"^[a-zA-Z]\.$",       # a.
-        r"^[ivxlcdmIVXLCDM]+\.$",  # i.
-        r"^[-•*]$",            # bullet only
+        r"^\d+(\.\d+)*\.?$",              # 1, 1., 1.1, 2.4
+        r"^\(?[a-zA-Z]\)$",               # (a)
+        r"^\(?[ivxlcdmIVXLCDM]+\)$",      # (i), (ii)
+        r"^[a-zA-Z]\.$",                  # a.
+        r"^[ivxlcdmIVXLCDM]+\.$",         # i.
+        r"^[-•*]$",                       # bullet only
     ]
     return any(re.match(pattern, stripped) for pattern in patterns)
 
@@ -120,6 +165,24 @@ def is_junk_chunk(text: str) -> bool:
     if re.match(r"^exhibit\s+\S+", stripped, re.IGNORECASE):
         return True
 
+    if re.match(r"^(schedule\s+\d+)", stripped, re.IGNORECASE):
+        return True
+
+    if re.match(r"^signed by", stripped, re.IGNORECASE):
+        return True
+
+    if re.match(r"^director/?secretary$", stripped, re.IGNORECASE):
+        return True
+
+    if re.match(r"^director$", stripped, re.IGNORECASE):
+        return True
+
+    if re.match(r"^name\s*\(please print\)$", stripped, re.IGNORECASE):
+        return True
+
+    if re.match(r"^price[s]?\b", stripped, re.IGNORECASE):
+        return True
+
     if re.match(r"^\)+$", stripped):
         return True
 
@@ -130,7 +193,6 @@ def is_junk_chunk(text: str) -> bool:
     if len(words) < 2:
         return True
 
-    # Reject text that is overwhelmingly symbols/digits
     alnum_chars = re.findall(r"[A-Za-z0-9]", stripped)
     alpha_words = re.findall(r"[A-Za-z]{2,}", stripped)
     if alnum_chars and len(alpha_words) == 0:
@@ -159,39 +221,75 @@ def _find_non_overlapping_span(
     return start, start + len(fragment)
 
 
-def _split_paragraph_with_offsets(
+def _make_chunk(
+    text: str,
+    start_char: int,
+    end_char: int,
+) -> dict[str, int | str] | None:
+    normalized = normalize_chunk_text(text)
+    if is_junk_chunk(normalized):
+        return None
+
+    return {
+        "text": normalized,
+        "start_char": start_char,
+        "end_char": end_char,
+    }
+
+
+def _split_long_paragraph_by_subclauses(
+    stripped_paragraph: str,
     paragraph_text: str,
     paragraph_start: int,
-    full_text: str,
-    long_paragraph_threshold: int = 700,
 ) -> list[dict[str, int | str]]:
     """
-    Split one paragraph-like block into clause-sized chunks.
-    Keeps structure when possible, falls back to sentence splitting only for long text.
+    Split long legal paragraphs by subclause markers like (a), (b), (i), etc.
+    Keeps the marker attached to its following content.
     """
-    stripped_paragraph = paragraph_text.strip()
-    if not stripped_paragraph:
+    subclauses = re.split(r"(?=\(\s*[a-zA-ZivxlcdmIVXLCDM]+\s*\))", stripped_paragraph)
+
+    if len(subclauses) <= 1:
         return []
 
-    # Preserve shorter paragraph blocks as a unit
-    if len(stripped_paragraph) <= long_paragraph_threshold:
-        normalized = normalize_chunk_text(stripped_paragraph)
-        local_start = paragraph_text.find(stripped_paragraph)
-        abs_start = paragraph_start + local_start
-        abs_end = abs_start + len(stripped_paragraph)
+    chunks: list[dict[str, int | str]] = []
+    cursor = 0
+    base_offset = paragraph_text.find(stripped_paragraph)
 
-        if not is_junk_chunk(normalized):
-            return [{
-                "text": normalized,
-                "start_char": abs_start,
-                "end_char": abs_end,
-            }]
-        return []
+    for part in subclauses:
+        part = part.strip()
+        if not part:
+            continue
 
-    # For long blocks, use sentence fallback
+        span = _find_non_overlapping_span(stripped_paragraph, part, cursor)
+        if span is None:
+            continue
+
+        local_start, local_end = span
+        cursor = local_end
+
+        abs_start = paragraph_start + base_offset + local_start
+        abs_end = paragraph_start + base_offset + local_end
+
+        chunk = _make_chunk(part, abs_start, abs_end)
+        if chunk is not None:
+            chunks.append(chunk)
+
+    return chunks
+
+
+def _split_long_paragraph_by_sentences(
+    stripped_paragraph: str,
+    paragraph_text: str,
+    paragraph_start: int,
+) -> list[dict[str, int | str]]:
+    """
+    Sentence fallback when a paragraph is still too long and does not split
+    naturally by subclause markers.
+    """
     doc = _NLP(stripped_paragraph)
     sentence_chunks: list[dict[str, int | str]] = []
     cursor = 0
+    base_offset = paragraph_text.find(stripped_paragraph)
 
     for sent in doc.sents:
         sent_text_raw = sent.text.strip()
@@ -205,20 +303,54 @@ def _split_paragraph_with_offsets(
         local_start, local_end = span
         cursor = local_end
 
-        abs_start = paragraph_start + paragraph_text.find(stripped_paragraph) + local_start
-        abs_end = paragraph_start + paragraph_text.find(stripped_paragraph) + local_end
-        normalized = normalize_chunk_text(sent_text_raw)
+        abs_start = paragraph_start + base_offset + local_start
+        abs_end = paragraph_start + base_offset + local_end
 
-        if is_junk_chunk(normalized):
-            continue
-
-        sentence_chunks.append({
-            "text": normalized,
-            "start_char": abs_start,
-            "end_char": abs_end,
-        })
+        chunk = _make_chunk(sent_text_raw, abs_start, abs_end)
+        if chunk is not None:
+            sentence_chunks.append(chunk)
 
     return sentence_chunks
+
+
+def _split_paragraph_with_offsets(
+    paragraph_text: str,
+    paragraph_start: int,
+    long_paragraph_threshold: int = 500,
+) -> list[dict[str, int | str]]:
+    """
+    Split one paragraph-like block into clause-sized chunks.
+
+    Strategy:
+    - keep short/medium legal paragraphs intact
+    - for long paragraphs, split by subclause markers first
+    - if no subclause split is available, fall back to sentence splitting
+    """
+    stripped_paragraph = paragraph_text.strip()
+    if not stripped_paragraph:
+        return []
+
+    local_start = paragraph_text.find(stripped_paragraph)
+    abs_start = paragraph_start + local_start
+    abs_end = abs_start + len(stripped_paragraph)
+
+    if len(stripped_paragraph) <= long_paragraph_threshold:
+        chunk = _make_chunk(stripped_paragraph, abs_start, abs_end)
+        return [chunk] if chunk is not None else []
+
+    subclause_chunks = _split_long_paragraph_by_subclauses(
+        stripped_paragraph=stripped_paragraph,
+        paragraph_text=paragraph_text,
+        paragraph_start=paragraph_start,
+    )
+    if subclause_chunks:
+        return subclause_chunks
+
+    return _split_long_paragraph_by_sentences(
+        stripped_paragraph=stripped_paragraph,
+        paragraph_text=paragraph_text,
+        paragraph_start=paragraph_start,
+    )
 
 
 def chunk_legal_text_with_offsets(text: str) -> list[dict[str, int | str]]:
@@ -226,49 +358,62 @@ def chunk_legal_text_with_offsets(text: str) -> list[dict[str, int | str]]:
     Chunk legal text using paragraph-first logic with offsets.
 
     Strategy:
-    - split on paragraph boundaries first
+    - remove recurring extraction noise first
+    - split on paragraph boundaries
     - preserve short/medium legal paragraphs as a whole
-    - fallback to sentence splitting only for long paragraphs
-    - filter obvious junk fragments like '1.1', '(a)', 'Source: ...'
+    - split long paragraphs by subclause markers first
+    - use sentence fallback only when needed
+    - filter obvious junk fragments and metadata
     """
     if not text or not text.strip():
         return []
+    
+    def force_section_breaks(text: str) -> str:
+        text = re.sub(
+            r"(?<!\n)\s(?=(\d{1,2}\.\s+[A-Z][^\n]{0,80}))",
+            "\n\n",
+            text,
+        )
+        return text
 
+    cleaned_text = strip_extraction_noise(text)
+    cleaned_text = force_section_breaks(cleaned_text)
     chunks: list[dict[str, int | str]] = []
 
-    # Find paragraph-like blocks including their absolute positions
     paragraph_pattern = re.compile(r"\S[\s\S]*?(?=\n\s*\n|\Z)")
-    for match in paragraph_pattern.finditer(text):
+    for match in paragraph_pattern.finditer(cleaned_text):
         paragraph_text = match.group()
         paragraph_start = match.start()
 
         paragraph_chunks = _split_paragraph_with_offsets(
             paragraph_text=paragraph_text,
             paragraph_start=paragraph_start,
-            full_text=text,
         )
         chunks.extend(paragraph_chunks)
 
-    # Merge header with following chunk when appropriate
     merged_chunks: list[dict[str, int | str]] = []
     i = 0
     while i < len(chunks):
         current = chunks[i]
         current_text = str(current["text"]).strip()
 
-        if (
-            is_header_like(current_text)
-            and i + 1 < len(chunks)
-            and not is_header_like(str(chunks[i + 1]["text"]).strip())
-        ):
-            nxt = chunks[i + 1]
-            merged_chunks.append({
-                "text": f"{current_text}\n{str(nxt['text']).strip()}",
-                "start_char": int(current["start_char"]),
-                "end_char": int(nxt["end_char"]),
-            })
-            i += 2
-            continue
+        if i + 1 < len(chunks):
+            next_chunk = chunks[i + 1]
+            next_text = str(next_chunk["text"]).strip()
+            gap = int(next_chunk["start_char"]) - int(current["end_char"])
+
+            if (
+                is_header_like(current_text)
+                and not is_header_like(next_text)
+                and gap < 50
+            ):
+                merged_chunks.append({
+                    "text": f"{current_text}\n{next_text}",
+                    "start_char": int(current["start_char"]),
+                    "end_char": int(next_chunk["end_char"]),
+                })
+                i += 2
+                continue
 
         merged_chunks.append(current)
         i += 1
