@@ -27,6 +27,13 @@ def pdf_to_text(path: str, as_text: bool = False, as_json: bool = False) -> Any:
     return pymupdf4llm.to_markdown(path)
 
 
+def split_by_clause_numbers(text: str) -> list[str]:
+    return re.split(
+        r"(?=\b\d{1,2}\.\d+\s)",  # matches 1.1, 2.4, 10.2 etc.
+        text
+    )
+
+
 def split_into_sentence(text: str, minimum_character_length: int = 2) -> list[str]:
     doc = _NLP(text)
     sentences: list[str] = []
@@ -243,38 +250,59 @@ def _split_long_paragraph_by_subclauses(
     paragraph_start: int,
 ) -> list[dict[str, int | str]]:
     """
-    Split long legal paragraphs by subclause markers like (a), (b), (i), etc.
+    Split long legal paragraphs using two passes:
+
+    1. split by subclause markers like (a), (b), (i), etc.
+    2. if that does not split anything useful, split by numbered clause markers
+       like 1.2, 2.4, 10.3, 12.2, etc.
+
     Keeps the marker attached to its following content.
     """
-    subclauses = re.split(r"(?=\(\s*[a-zA-ZivxlcdmIVXLCDM]+\s*\))", stripped_paragraph)
-
-    if len(subclauses) <= 1:
-        return []
-
-    chunks: list[dict[str, int | str]] = []
-    cursor = 0
     base_offset = paragraph_text.find(stripped_paragraph)
 
-    for part in subclauses:
-        part = part.strip()
-        if not part:
-            continue
+    def build_chunks(parts: list[str]) -> list[dict[str, int | str]]:
+        chunks: list[dict[str, int | str]] = []
+        cursor = 0
 
-        span = _find_non_overlapping_span(stripped_paragraph, part, cursor)
-        if span is None:
-            continue
+        for part in parts:
+            part = part.strip()
+            if not part:
+                continue
 
-        local_start, local_end = span
-        cursor = local_end
+            span = _find_non_overlapping_span(stripped_paragraph, part, cursor)
+            if span is None:
+                continue
 
-        abs_start = paragraph_start + base_offset + local_start
-        abs_end = paragraph_start + base_offset + local_end
+            local_start, local_end = span
+            cursor = local_end
 
-        chunk = _make_chunk(part, abs_start, abs_end)
-        if chunk is not None:
-            chunks.append(chunk)
+            abs_start = paragraph_start + base_offset + local_start
+            abs_end = paragraph_start + base_offset + local_end
 
-    return chunks
+            chunk = _make_chunk(part, abs_start, abs_end)
+            if chunk is not None:
+                chunks.append(chunk)
+
+        return chunks
+
+    # Pass 1: split by (a), (b), (i), etc.
+    subclauses = re.split(
+        r"(?=\(\s*[a-zA-ZivxlcdmIVXLCDM]+\s*\))",
+        stripped_paragraph,
+    )
+    if len(subclauses) > 1:
+        subclause_chunks = build_chunks(subclauses)
+        if subclause_chunks:
+            return subclause_chunks
+
+    # Pass 2: split by numbered clause markers like 1.2, 2.4, 10.3
+    numbered_parts = split_by_clause_numbers(stripped_paragraph)
+    if len(numbered_parts) > 1:
+        numbered_chunks = build_chunks(numbered_parts)
+        if numbered_chunks:
+            return numbered_chunks
+
+    return []
 
 
 def _split_long_paragraph_by_sentences(
