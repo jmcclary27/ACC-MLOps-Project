@@ -25,6 +25,7 @@ def generate_report(run_id = None, experiment_id = "1" ):
         if not run_id:
             print("No runs found")
             return
+        #training data path
     metric_path = f"mlruns/{experiment_id}/{run_id}/artifacts/distilbert_metrics.json"
     output_dir = "artifacts/evaluation"
     report_file = os.path.join(output_dir, f"report_{run_id[:8]}.md")
