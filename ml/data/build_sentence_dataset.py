@@ -42,7 +42,7 @@ rows = []
 for contract in data["data"]:
     for paragraph in contract["paragraphs"]:
         context = paragraph["context"]
-        sentences = split_into_sentences_with_offsets(context)
+        sentences = chunk_legal_text_with_offsets(context)
 
         for qa in paragraph["qas"]:
             label = qa["id"].rsplit("__", 1)[-1].strip()
