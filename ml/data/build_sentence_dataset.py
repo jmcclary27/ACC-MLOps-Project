@@ -5,10 +5,12 @@ import csv
 import json
 from pathlib import Path
 
-from ml.text_helpers import chunk_legal_text_with_offsets
+from text_helpers import chunk_legal_text_with_offsets
 
-CUAD_JSON_PATH = Path("raw/CUADv1.json")
-OUTPUT_PATH = Path("processed/clean_chunk_dataset.csv")
+BASE_DIR = Path(__file__).resolve().parent
+
+CUAD_JSON_PATH = BASE_DIR / "raw" / "CUADv1.json"
+OUTPUT_PATH = BASE_DIR / "processed" / "clean_chunk_dataset.csv"
 
 SELECTED_LABELS = {
     "Governing Law",
