@@ -1,3 +1,4 @@
+# text_helpers.py
 # at the moment these functions are very simple, but we can add more as we develop the rest of the program
 
 import pymupdf.layout # allows use of pdf as text and json

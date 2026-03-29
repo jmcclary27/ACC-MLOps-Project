@@ -1,12 +1,4 @@
-"""
-Document-level inference utilities for contract clause classification.
-
-This module:
-- splits contract text into clause-like chunks
-- runs batch inference through api.model_loader
-- returns structured per-clause predictions
-"""
-
+# inference.py
 from __future__ import annotations
 
 import re
