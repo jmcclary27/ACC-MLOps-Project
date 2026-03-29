@@ -1,37 +1,52 @@
-"""
-Document-level inference utilities for contract clause classification.
-
-This module:
-- splits contract text into clause-like chunks
-- runs batch inference through api.model_loader
-- returns structured per-clause predictions
-"""
-
+# inference.py
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from api.model_loader import predict_clauses
+from ml.data.text_helpers import chunk_legal_text_with_offsets
 
 
-def split_into_clauses(text: str) -> list[str]:
+def merge_adjacent_predictions(
+    results: list[dict[str, Any]],
+    merge_labels: set[str] | None = None,
+    max_gap_chars: int = 5,
+) -> list[dict[str, Any]]:
     """
-    Split contract text into simple clause-like segments.
+    Merge adjacent chunks with the same predicted label.
 
-    Current strategy:
-    - split on sentence-ending punctuation followed by whitespace
-    - split on one or more newlines
-    - remove empty chunks
+    Args:
+        results: prediction results sorted by document order
+        merge_labels: optional allowlist of labels that may be merged.
+            If None, all labels may be merged.
+        max_gap_chars: maximum allowed gap between chunks for merge
 
-    Later, this can be replaced with smarter legal clause segmentation.
+    Returns:
+        Merged results list
     """
-    if not text or not text.strip():
+    if not results:
         return []
 
-    raw_parts = re.split(r"(?<=[.!?])\s+|\n+", text)
-    clauses = [part.strip() for part in raw_parts if part.strip()]
-    return clauses
+    merged: list[dict[str, Any]] = [results[0].copy()]
+
+    for current in results[1:]:
+        previous = merged[-1]
+
+        same_label = current["label"] == previous["label"]
+        label_allowed = merge_labels is None or current["label"] in merge_labels
+        gap = int(current["start_char"]) - int(previous["end_char"])
+        near_enough = gap <= max_gap_chars
+
+        if same_label and label_allowed and near_enough:
+            previous["text"] = f"{previous['text']} {current['text']}".strip()
+            previous["end_char"] = current["end_char"]
+            previous["confidence"] = (
+                float(previous["confidence"]) + float(current["confidence"])
+            ) / 2.0
+        else:
+            merged.append(current.copy())
+
+    return merged
 
 
 def predict_document(
@@ -40,37 +55,41 @@ def predict_document(
     batch_size: int = 16,
 ) -> list[dict[str, Any]]:
     """
-    Run inference over a full document.
-
-    Args:
-        text: Full document text
-        max_length: Max token length passed to tokenizer
-        batch_size: Batch size for model inference
+    Run inference over a full document using legal-aware chunking.
 
     Returns:
         A list of dictionaries containing:
-        - sentence
+        - text
         - label
         - confidence
+        - start_char
+        - end_char
     """
-    clauses = split_into_clauses(text)
-    if not clauses:
+    chunks = chunk_legal_text_with_offsets(text)
+    if not chunks:
         return []
 
+    chunk_texts = [str(chunk["text"]) for chunk in chunks]
+
     predictions = predict_clauses(
-        clauses,
+        chunk_texts,
         max_length=max_length,
         batch_size=batch_size,
     )
 
     results: list[dict[str, Any]] = []
-    for clause, prediction in zip(clauses, predictions):
+    for chunk, prediction in zip(chunks, predictions):
         results.append(
             {
-                "sentence": clause,
+                "text": chunk["text"],
                 "label": prediction["label"],
                 "confidence": prediction["confidence"],
+                "start_char": chunk["start_char"],
+                "end_char": chunk["end_char"],
             }
         )
+
+    # Merge clause-like adjacent predictions
+    results = merge_adjacent_predictions(results)
 
     return results
