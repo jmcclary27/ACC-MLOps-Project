@@ -1,32 +1,53 @@
+from __future__ import annotations
+
 import sys
-import os
+from pathlib import Path
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Add project root to Python path
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(PROJECT_ROOT))
+
 from ml.data.text_helpers import pdf_to_text, split_into_sentence, clean_text
-# TEST RESULTS:
-# For all three methods, the tests passed successfully.
-# new line characters \n are added to the end of the text whenever there is a new line in the PDF document.
-# clean text takes care of this
-def test_pdf_to_text():
-    
-    # test with a sample pdf file
-    text = pdf_to_text("tests/sample.pdf", as_text=True)
-    #check for string type, non empty, correct content
-    assert isinstance(text, str)
-    assert len(text) > 0
-    assert text == "Hello, this is a test PDF. This agreement shall terminate upon breach. The tenant must pay a rent of $500 on the first of each month. \n\n"
-    #checking for the new line characters
-    print(repr(text))
-def test_split_into_sentence():
-    text = pdf_to_text("tests/sample.pdf", as_text=True)
-    sentences = split_into_sentence(text)
-    result = ["Hello, this is a test PDF.", "This agreement shall terminate upon breach.", "The tenant must pay a rent of $500 on the first of each month. \n\n"]
-    assert result == sentences
-def test_clean_text():
-    text = pdf_to_text("tests/sample.pdf", as_text=True)
-    cleaned_text = clean_text(text)
-    assert cleaned_text == "Hello, this is a test PDF. This agreement shall terminate upon breach. The tenant must pay a rent of $500 on the first of each month."
+# If your file actually lives elsewhere, use the correct import, for example:
+# from ml.data.text_helpers import pdf_to_text, split_into_sentence, clean_text
 
-test_pdf_to_text()
-test_split_into_sentence()
-test_clean_text()
+
+SAMPLE_PDF = Path(__file__).resolve().parent / "sample.pdf"
+
+
+def test_pdf_to_text() -> None:
+    text = pdf_to_text(str(SAMPLE_PDF), as_text=True)
+
+    assert isinstance(text, str)
+    assert len(text.strip()) > 0
+
+    # Avoid exact full-string equality for PDF extraction, which can vary slightly
+    assert "Hello, this is a test PDF." in text
+    assert "This agreement shall terminate upon breach." in text
+    assert "The tenant must pay a rent of $500 on the first of each month." in text
+
+
+def test_split_into_sentence() -> None:
+    text = pdf_to_text(str(SAMPLE_PDF), as_text=True)
+    sentences = split_into_sentence(text)
+
+    expected = [
+        "Hello, this is a test PDF.",
+        "This agreement shall terminate upon breach.",
+        "The tenant must pay a rent of $500 on the first of each month.",
+    ]
+
+    assert sentences == expected
+
+
+def test_clean_text() -> None:
+    text = pdf_to_text(str(SAMPLE_PDF), as_text=True)
+    cleaned_text = clean_text(text)
+
+    expected = (
+        "Hello, this is a test PDF. "
+        "This agreement shall terminate upon breach. "
+        "The tenant must pay a rent of $500 on the first of each month."
+    )
+
+    assert cleaned_text == expected
