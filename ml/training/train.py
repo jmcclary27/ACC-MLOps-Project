@@ -23,7 +23,7 @@ from ml.training.dataset import ContractDataset
 # -----------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-DATA_PATH = PROJECT_ROOT / "ml" / "data" / "processed" / "clean_sentence_dataset.csv"
+DATA_PATH = PROJECT_ROOT / "ml" / "data" / "processed" / "clean_chunk_dataset.csv"
 MODEL_OUTPUT_DIR = PROJECT_ROOT / "ml" / "models" / "distilbert_clause_classifier"
 METRICS_OUTPUT_DIR = PROJECT_ROOT / "ml" / "data" / "processed"
 METRICS_JSON_PATH = METRICS_OUTPUT_DIR / "distilbert_metrics.json"
