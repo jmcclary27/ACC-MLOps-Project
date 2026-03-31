@@ -1,16 +1,3 @@
-"""
-Model loader and inference utilities for the trained DistilBERT clause classifier.
-
-This module:
-- loads the trained Hugging Face model once
-- loads the tokenizer once
-- performs single-text and batch inference
-- returns labels using the model config's id2label mapping when available
-
-Expected model path:
-    ml/models/distilbert_clause_classifier
-"""
-
 from __future__ import annotations
 
 import logging
@@ -20,10 +7,12 @@ from typing import Any
 import torch
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+from ml.model_registry import resolve_model_dir
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-MODEL_DIR = Path("ml/models/distilbert_clause_classifier")
+MODEL_DIR: Path | None = None
 
 _model: AutoModelForSequenceClassification | None = None
 _tokenizer: Any | None = None
@@ -32,37 +21,45 @@ _id2label: dict[int, str] | None = None
 
 
 def _get_device() -> torch.device:
-    """
-    Choose the best available device for inference.
-    """
     if torch.cuda.is_available():
         return torch.device("cuda")
     return torch.device("cpu")
 
 
-def load_model() -> None:
-    """
-    Load the tokenizer and model into memory once.
+def _resolved_model_dir() -> Path:
+    global MODEL_DIR
 
-    Raises:
-        FileNotFoundError: if the model directory does not exist
-        RuntimeError: if the model/tokenizer cannot be loaded
-    """
+    if MODEL_DIR is None:
+        MODEL_DIR = resolve_model_dir()
+
+    return MODEL_DIR
+
+
+def reset_loaded_model() -> None:
+    global _model, _tokenizer, _device, _id2label, MODEL_DIR
+    _model = None
+    _tokenizer = None
+    _device = None
+    _id2label = None
+    MODEL_DIR = None
+
+
+def load_model() -> None:
     global _model, _tokenizer, _device, _id2label
 
     if _model is not None and _tokenizer is not None:
         return
 
-    if not MODEL_DIR.exists():
-        raise FileNotFoundError(
-            f"Model directory not found: {MODEL_DIR.resolve()}"
-        )
+    model_dir = _resolved_model_dir()
 
-    logger.info("Loading tokenizer from %s", MODEL_DIR.resolve())
-    _tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
+    if not model_dir.exists():
+        raise FileNotFoundError(f"Model directory not found: {model_dir.resolve()}")
 
-    logger.info("Loading model from %s", MODEL_DIR.resolve())
-    _model = AutoModelForSequenceClassification.from_pretrained(MODEL_DIR)
+    logger.info("Loading tokenizer from %s", model_dir.resolve())
+    _tokenizer = AutoTokenizer.from_pretrained(model_dir)
+
+    logger.info("Loading model from %s", model_dir.resolve())
+    _model = AutoModelForSequenceClassification.from_pretrained(model_dir)
 
     _device = _get_device()
     _model.to(_device)
@@ -70,12 +67,12 @@ def load_model() -> None:
 
     raw_id2label = getattr(_model.config, "id2label", None)
     if isinstance(raw_id2label, dict) and raw_id2label:
-        # Hugging Face sometimes stores keys as ints, but we normalize just in case
         _id2label = {int(k): str(v) for k, v in raw_id2label.items()}
     else:
         _id2label = None
 
     logger.info("Model loaded successfully on device: %s", _device)
+    logger.info("Resolved model directory: %s", model_dir.resolve())
 
 
 def _require_loaded() -> tuple[
@@ -83,9 +80,6 @@ def _require_loaded() -> tuple[
     Any,
     torch.device,
 ]:
-    """
-    Ensure model assets are loaded and return them.
-    """
     if _model is None or _tokenizer is None or _device is None:
         load_model()
 
@@ -96,9 +90,6 @@ def _require_loaded() -> tuple[
 
 
 def _label_from_index(class_idx: int) -> str:
-    """
-    Convert a predicted class index into a readable label.
-    """
     if _id2label is not None and class_idx in _id2label:
         return _id2label[class_idx]
 
@@ -106,18 +97,6 @@ def _label_from_index(class_idx: int) -> str:
 
 
 def predict_clause(text: str, max_length: int = 512) -> dict[str, float | str]:
-    """
-    Predict the class for a single clause.
-
-    Args:
-        text: Input text to classify
-        max_length: Max token length for tokenizer truncation
-
-    Returns:
-        A dictionary with:
-        - label
-        - confidence
-    """
     clean_text = text.strip()
     if not clean_text:
         raise ValueError("Cannot predict on empty text.")
@@ -154,19 +133,6 @@ def predict_clauses(
     max_length: int = 512,
     batch_size: int = 16,
 ) -> list[dict[str, float | str]]:
-    """
-    Predict classes for multiple clauses in batches.
-
-    Args:
-        texts: List of clause strings
-        max_length: Max token length for tokenizer truncation
-        batch_size: Number of texts per inference batch
-
-    Returns:
-        A list of dictionaries, each containing:
-        - label
-        - confidence
-    """
     if not texts:
         return []
 
