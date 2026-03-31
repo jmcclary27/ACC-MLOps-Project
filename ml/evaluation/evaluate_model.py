@@ -8,6 +8,7 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from sklearn.model_selection import train_test_split
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
+from ml.model_registry import resolve_model_dir
 from ml.training.dataset import ContractDataset
 
 
@@ -17,10 +18,8 @@ from ml.training.dataset import ContractDataset
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 DATA_PATH = PROJECT_ROOT / "ml" / "data" / "processed" / "clean_chunk_dataset.csv"
-MODEL_DIR = PROJECT_ROOT / "ml" / "models" / "distilbert_clause_classifier"
-LABEL_MAP_PATH = MODEL_DIR / "label_map.json"
-
 OUTPUT_DIR = PROJECT_ROOT / "ml" / "data" / "processed"
+
 EVAL_JSON_PATH = OUTPUT_DIR / "distilbert_eval_metrics.json"
 EVAL_PREDICTIONS_PATH = OUTPUT_DIR / "distilbert_eval_predictions.csv"
 CONFUSION_MATRIX_PATH = OUTPUT_DIR / "distilbert_confusion_matrix.csv"
@@ -185,12 +184,16 @@ def main():
     _, _, test_df = safe_train_val_test_split(df)
     print(f"Using test split of size: {len(test_df)}")
 
+    model_dir = resolve_model_dir()
+    label_map_path = model_dir / "label_map.json"
+
+    print(f"Resolved model directory: {model_dir}")
     print("Loading label map...")
-    label2id, id2label = load_label_maps(LABEL_MAP_PATH)
+    label2id, id2label = load_label_maps(label_map_path)
 
     print("Loading tokenizer and model...")
-    tokenizer = AutoTokenizer.from_pretrained(str(MODEL_DIR))
-    model = AutoModelForSequenceClassification.from_pretrained(str(MODEL_DIR))
+    tokenizer = AutoTokenizer.from_pretrained(str(model_dir))
+    model = AutoModelForSequenceClassification.from_pretrained(str(model_dir))
 
     print("Running evaluation...")
     pred_df = predict_dataset(
@@ -207,6 +210,7 @@ def main():
     label_order = [id2label[i] for i in range(len(id2label))]
 
     metrics = {
+        "resolved_model_dir": str(model_dir),
         "accuracy": accuracy_score(y_true, y_pred),
         "f1_micro": f1_score(y_true, y_pred, average="micro", zero_division=0),
         "f1_macro": f1_score(y_true, y_pred, average="macro", zero_division=0),
