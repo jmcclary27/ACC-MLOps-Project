@@ -1,11 +1,11 @@
-# api/main.py
 from __future__ import annotations
 
 import io
 import logging
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from api.model_loader import load_model
@@ -45,6 +45,47 @@ class DocumentRequest(BaseModel):
     text: str
 
 
+def format_prediction_result(result: dict[str, object]) -> dict[str, object]:
+    """
+    Normalize a prediction result into the API response format.
+    """
+    return {
+        "sentence": result["text"],
+        "label": result["label"],
+        "confidence": result["confidence"],
+        "start_char": result["start_char"],
+        "end_char": result["end_char"],
+    }
+
+
+def format_prediction_results(results: list[dict[str, object]]) -> list[dict[str, object]]:
+    return [format_prediction_result(result) for result in results]
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    """
+    Return all expected API errors in a consistent format.
+    """
+    message = exc.detail if isinstance(exc.detail, str) else "Request failed."
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": message},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Catch unexpected server errors so clients never see raw stack traces.
+    """
+    logger.exception("Unhandled server error: %s", exc)
+    return JSONResponse(
+        status_code=500,
+        content={"error": "Internal server error."},
+    )
+
+
 @app.on_event("startup")
 def startup_event() -> None:
     """
@@ -75,11 +116,12 @@ def process_clauses(request: DocumentRequest) -> dict[str, object]:
         raise HTTPException(status_code=400, detail="Input text is empty.")
 
     results = predict_document(clean_text)
+    formatted_results = format_prediction_results(results)
 
     return {
         "source_type": "text",
-        "num_predictions": len(results),
-        "results": results,
+        "num_predictions": len(formatted_results),
+        "results": formatted_results,
     }
 
 
@@ -91,7 +133,7 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     if fitz is None:
         raise HTTPException(
             status_code=500,
-            detail="PyMuPDF is not installed. Add PyMuPDF to requirements.txt.",
+            detail="PyMuPDF is not installed.",
         )
 
     text_parts: list[str] = []
@@ -104,7 +146,7 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
     except Exception as exc:
         raise HTTPException(
             status_code=400,
-            detail=f"Failed to read PDF file: {exc}",
+            detail="Failed to read PDF file.",
         ) from exc
 
     return "\n".join(text_parts).strip()
@@ -114,7 +156,7 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     if Document is None:
         raise HTTPException(
             status_code=500,
-            detail="python-docx is not installed. Add python-docx to requirements.txt.",
+            detail="python-docx is not installed.",
         )
 
     doc_stream = io.BytesIO(file_bytes)
@@ -124,7 +166,7 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     except Exception as exc:
         raise HTTPException(
             status_code=400,
-            detail=f"Failed to read DOCX file: {exc}",
+            detail="Failed to read DOCX file.",
         ) from exc
 
     return "\n".join(paragraph.text for paragraph in doc.paragraphs).strip()
@@ -144,7 +186,7 @@ def extract_text(filename: str, file_bytes: bytes) -> str:
 
     raise HTTPException(
         status_code=400,
-        detail="Unsupported file type. Please upload a .txt, .pdf, or .docx file.",
+        detail="Invalid file type. Please upload a .txt, .pdf, or .docx file.",
     )
 
 
@@ -175,11 +217,12 @@ async def upload_contract(file: UploadFile = File(...)) -> dict[str, object]:
         )
 
     results = predict_document(extracted_text)
+    formatted_results = format_prediction_results(results)
 
     return {
         "source_type": "file",
         "filename": file.filename,
         "extracted_text_length": len(extracted_text),
-        "num_predictions": len(results),
-        "results": results,
+        "num_predictions": len(formatted_results),
+        "results": formatted_results,
     }
