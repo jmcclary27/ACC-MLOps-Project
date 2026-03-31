@@ -222,6 +222,7 @@ async def upload_contract(file: UploadFile = File(...)) -> dict[str, object]:
     return {
         "source_type": "file",
         "filename": file.filename,
+        "extracted_text": extracted_text,
         "extracted_text_length": len(extracted_text),
         "num_predictions": len(formatted_results),
         "results": formatted_results,
