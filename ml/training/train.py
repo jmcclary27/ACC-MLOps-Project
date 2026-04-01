@@ -5,7 +5,7 @@ import mlflow
 import mlflow.transformers
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, f1_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, f1_score
 from sklearn.model_selection import train_test_split
 from transformers import (
     AutoModelForSequenceClassification,
@@ -15,6 +15,14 @@ from transformers import (
     TrainingArguments,
 )
 
+from ml.model_registry import (
+    ModelVersionInfo,
+    get_next_version,
+    get_versioned_model_dir,
+    mark_as_production,
+    save_version_metadata,
+    utc_now_iso,
+)
 from ml.training.dataset import ContractDataset
 
 
@@ -23,14 +31,14 @@ from ml.training.dataset import ContractDataset
 # -----------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
-DATA_PATH = PROJECT_ROOT / "ml" / "data" / "processed" / "clean_sentence_dataset.csv"
-MODEL_OUTPUT_DIR = PROJECT_ROOT / "ml" / "models" / "distilbert_clause_classifier"
+DATA_PATH = PROJECT_ROOT / "ml" / "data" / "processed" / "clean_chunk_dataset.csv"
+MODELS_DIR = PROJECT_ROOT / "ml" / "models"
 METRICS_OUTPUT_DIR = PROJECT_ROOT / "ml" / "data" / "processed"
 METRICS_JSON_PATH = METRICS_OUTPUT_DIR / "distilbert_metrics.json"
 PREDICTIONS_CSV_PATH = METRICS_OUTPUT_DIR / "distilbert_test_predictions.csv"
-LABEL_MAP_PATH = MODEL_OUTPUT_DIR / "label_map.json"
 
 MODEL_NAME = "distilbert-base-uncased"
+MODEL_BASENAME = "distilbert_clause_classifier"
 MAX_LENGTH = 128
 
 SELECTED_LABELS = {
@@ -49,7 +57,6 @@ TRAIN_SIZE = 0.70
 VAL_SIZE = 0.15
 TEST_SIZE = 0.15
 
-# Conservative CPU-friendly defaults
 NUM_EPOCHS = 6
 TRAIN_BATCH_SIZE = 8
 EVAL_BATCH_SIZE = 8
@@ -59,11 +66,12 @@ EARLY_STOPPING_PATIENCE = 2
 
 MLFLOW_EXPERIMENT_NAME = "contract-clause-classifier"
 
+
 # -----------------------------
 # Helpers
 # -----------------------------
 def ensure_dirs():
-    MODEL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
     METRICS_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
@@ -97,7 +105,6 @@ def print_distribution(name: str, labels: pd.Series) -> None:
 
 
 def safe_train_val_test_split(df: pd.DataFrame):
-    # First split train vs temp (70 / 30)
     train_df, temp_df = train_test_split(
         df,
         test_size=(1.0 - TRAIN_SIZE),
@@ -105,7 +112,6 @@ def safe_train_val_test_split(df: pd.DataFrame):
         stratify=df["clause"],
     )
 
-    # Then split temp into val/test equally (15 / 15 overall)
     val_df, test_df = train_test_split(
         temp_df,
         test_size=0.5,
@@ -153,13 +159,15 @@ def compute_metrics_factory(id2label: dict):
     return compute_metrics
 
 
-def save_label_map(label2id: dict, id2label: dict):
+def save_label_map(output_dir: Path, label2id: dict, id2label: dict):
+    label_map_path = output_dir / "label_map.json"
     payload = {
         "label2id": label2id,
         "id2label": {str(k): v for k, v in id2label.items()},
     }
-    with open(LABEL_MAP_PATH, "w", encoding="utf-8") as f:
+    with open(label_map_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
+    return label_map_path
 
 
 # -----------------------------
@@ -167,6 +175,11 @@ def save_label_map(label2id: dict, id2label: dict):
 # -----------------------------
 def main():
     ensure_dirs()
+
+    model_version = get_next_version()
+    model_output_dir = get_versioned_model_dir(model_version)
+    label_map_path = model_output_dir / "label_map.json"
+    checkpoints_dir = model_output_dir / "checkpoints"
 
     print("Loading dataset...")
     df = load_and_validate_data(DATA_PATH)
@@ -185,7 +198,6 @@ def main():
     print_distribution("Validation", val_df["clause"])
     print_distribution("Test", test_df["clause"])
 
-    # Build label map from full filtered dataset so it is consistent everywhere
     label2id, id2label = build_label_maps(df["clause"])
     num_labels = len(label2id)
 
@@ -226,7 +238,7 @@ def main():
     mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
 
     training_args = TrainingArguments(
-        output_dir=str(MODEL_OUTPUT_DIR / "checkpoints"),
+        output_dir=str(checkpoints_dir),
         eval_strategy="epoch",
         save_strategy="epoch",
         logging_strategy="epoch",
@@ -239,10 +251,10 @@ def main():
         metric_for_best_model="f1_macro",
         greater_is_better=True,
         save_total_limit=2,
-        report_to="none",  # we log to MLflow manually below
+        report_to="none",
         seed=RANDOM_STATE,
-        dataloader_num_workers=0,  # safer on Windows
-        fp16=False,  # CPU only
+        dataloader_num_workers=0,
+        fp16=False,
     )
 
     trainer = Trainer(
@@ -256,8 +268,10 @@ def main():
     )
 
     with mlflow.start_run(run_name="distilbert_sentence_classifier") as run:
-        # Params
         mlflow.log_param("model_name", MODEL_NAME)
+        mlflow.log_param("model_basename", MODEL_BASENAME)
+        mlflow.log_param("model_version", model_version)
+        mlflow.log_param("model_output_dir", str(model_output_dir))
         mlflow.log_param("max_length", MAX_LENGTH)
         mlflow.log_param("num_labels", num_labels)
         mlflow.log_param("train_size", len(train_df))
@@ -274,7 +288,6 @@ def main():
         print("\nStarting training...")
         train_result = trainer.train()
 
-        # Log training metrics
         train_metrics = train_result.metrics
         for key, value in train_metrics.items():
             if isinstance(value, (int, float)):
@@ -292,7 +305,6 @@ def main():
             if isinstance(value, (int, float)):
                 mlflow.log_metric(key, value)
 
-        # Predictions on test set for detailed report
         predictions_output = trainer.predict(test_dataset)
         test_logits = predictions_output.predictions
         test_pred_ids = np.argmax(test_logits, axis=-1)
@@ -301,7 +313,6 @@ def main():
         test_pred_labels = [id2label[int(i)] for i in test_pred_ids]
         test_true_labels = [id2label[int(i)] for i in test_true_ids]
 
-        # Save predictions CSV
         pred_df = pd.DataFrame(
             {
                 "text": test_df["text"].tolist(),
@@ -311,7 +322,6 @@ def main():
         )
         pred_df.to_csv(PREDICTIONS_CSV_PATH, index=False)
 
-        # Detailed classification report
         report_dict = classification_report(
             test_true_labels,
             test_pred_labels,
@@ -320,6 +330,8 @@ def main():
         )
 
         all_metrics = {
+            "model_version": model_version,
+            "model_output_dir": str(model_output_dir),
             "train_metrics": train_metrics,
             "val_metrics": val_metrics,
             "test_metrics": test_metrics,
@@ -331,18 +343,31 @@ def main():
         with open(METRICS_JSON_PATH, "w", encoding="utf-8") as f:
             json.dump(all_metrics, f, indent=2)
 
-        # Save final model + tokenizer + label map
         print("\nSaving best model...")
-        trainer.save_model(str(MODEL_OUTPUT_DIR))
-        tokenizer.save_pretrained(str(MODEL_OUTPUT_DIR))
-        save_label_map(label2id, id2label)
+        model_output_dir.mkdir(parents=True, exist_ok=True)
+        trainer.save_model(str(model_output_dir))
+        tokenizer.save_pretrained(str(model_output_dir))
+        save_label_map(model_output_dir, label2id, id2label)
 
-        # Log artifacts
+        version_info = ModelVersionInfo(
+            model_name=MODEL_BASENAME,
+            version=model_version,
+            artifact_path=str(model_output_dir),
+            created_at=utc_now_iso(),
+            stage="staging",
+        )
+        version_metadata_path = save_version_metadata(version_info)
+        production_pointer_path = mark_as_production(version_info)
+
+        mlflow.set_tag("model_stage", "production")
+        mlflow.set_tag("production_model_version", str(model_version))
+
         mlflow.log_artifact(str(METRICS_JSON_PATH))
         mlflow.log_artifact(str(PREDICTIONS_CSV_PATH))
-        mlflow.log_artifact(str(LABEL_MAP_PATH))
+        mlflow.log_artifact(str(label_map_path))
+        mlflow.log_artifact(str(version_metadata_path))
+        mlflow.log_artifact(str(production_pointer_path))
 
-        # Optional: log saved transformer model to MLflow
         try:
             mlflow.transformers.log_model(
                 transformers_model={
@@ -356,7 +381,8 @@ def main():
 
         print("\nDone.")
         print(f"MLflow run_id: {run.info.run_id}")
-        print(f"Model saved to: {MODEL_OUTPUT_DIR}")
+        print(f"Versioned model saved to: {model_output_dir}")
+        print(f"Production pointer saved to: {production_pointer_path}")
         print(f"Metrics saved to: {METRICS_JSON_PATH}")
         print(f"Predictions saved to: {PREDICTIONS_CSV_PATH}")
 
