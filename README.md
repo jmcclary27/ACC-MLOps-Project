@@ -27,7 +27,7 @@ npm install
 npm run dev
 ```
 
-# To Upload Traoned models
+# To Upload Trained Models
 
 ```bash
 git lfs track <filepath>
