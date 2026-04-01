@@ -27,6 +27,12 @@ npm install
 npm run dev
 ```
 
+# To Upload Traoned models
+
+```bash
+git lfs track <filepath>
+```
+
 # Initial Setup (First Time Only)
 
 Clone the repository:
