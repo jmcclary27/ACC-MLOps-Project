@@ -749,6 +749,9 @@ def _merge_headers_with_following_content(
     chunks: list[dict[str, int | str]],
     max_gap: int = 80,
 ) -> list[dict[str, int | str]]:
+    def _is_new_section_header(text: str) -> bool:
+        return bool(re.match(r"^(schedule|section|clause)\s+\d+", text, re.IGNORECASE))
+
     merged: list[dict[str, int | str]] = []
     i = 0
 
@@ -761,7 +764,11 @@ def _merge_headers_with_following_content(
             next_text = str(nxt["text"]).strip()
             gap = int(nxt["start_char"]) - int(current["end_char"])
 
-            if is_header_like(current_text) and gap <= max_gap:
+            if (
+                is_header_like(current_text)
+                and gap <= max_gap
+                and not _is_new_section_header(next_text)
+            ):
                 merged.append(
                     {
                         "text": f"{current_text}\n{next_text}",

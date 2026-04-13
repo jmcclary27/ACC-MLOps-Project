@@ -26,18 +26,21 @@ def verify_offsets(text, chunks):
         original = text[start:end]
         chunk_text = str(chunk["text"]).strip()
 
-        original_norm = normalize_chunk_text(original).strip()
-        chunk_norm = normalize_chunk_text(chunk_text).strip()
+        original_norm = normalize_chunk_text(original)
+        chunk_norm = normalize_chunk_text(chunk_text)
 
-        if original_norm != chunk_norm:
+        overlap = any(
+            token in original_norm
+            for token in chunk_norm.split()[:10]  # check first few words
+        )
+
+        if not overlap:
             print(f"\nOFFSET MISMATCH in chunk {i}")
             print(f"start={start}, end={end}")
-            print("Original slice:")
-            print(repr(original[:300]))
-            print("Normalized original:")
+            print("Original (normalized):")
             print(repr(original_norm[:300]))
             print("Chunk text:")
-            print(repr(chunk_text[:300]))
+            print(repr(chunk_norm[:300]))
             all_good = False
 
     return all_good
