@@ -824,6 +824,28 @@ def _merge_orphan_tail_chunks(
     return merged
 
 
+def _is_weak_clause(text: str) -> bool:
+    s = normalize_chunk_text(text)
+    lower = s.lower()
+
+    if len(s) < 35:
+        return True
+
+    weak_patterns = [
+        r"^section\s+\d+(\.\d+)*$",
+        r"^\d+(\.\d+)*$",
+        r"^\([a-z]\)$",
+        r"^\([ivxlcdm]+\)$",
+    ]
+    if any(re.match(p, lower) for p in weak_patterns):
+        return True
+
+    if len(s.split()) < 5:
+        return True
+
+    return False
+
+
 def _remove_bad_chunks(chunks: list[dict[str, int | str]]) -> list[dict[str, int | str]]:
     cleaned: list[dict[str, int | str]] = []
 
@@ -833,11 +855,12 @@ def _remove_bad_chunks(chunks: list[dict[str, int | str]]) -> list[dict[str, int
         if _is_junk_chunk(text):
             continue
 
-        # remove obvious inline source junk that survived normalization
+        if _is_weak_clause(text):
+            continue
+
         if re.search(r"source:\s+.*10-k", text, flags=re.IGNORECASE):
             continue
 
-        # kill fake clause-reference fragments
         if re.match(r"^\d+\.\d+\s+and\s+\d+\.\d+,", text, flags=re.IGNORECASE):
             continue
 
