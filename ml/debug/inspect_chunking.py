@@ -1,6 +1,7 @@
 # ml/debug/inspect_chunking.py
 
-from ml.data.text_helpers import chunk_legal_text_with_offsets, pdf_to_text
+from ml.data.text_helpers import chunk_legal_text_with_offsets, pdf_to_text, normalize_chunk_text
+
 
 def inspect(path):
     text = pdf_to_text(path, as_text=True)
@@ -13,7 +14,9 @@ def inspect(path):
         print(f"Chars: {chunk['start_char']} → {chunk['end_char']}")
         print(f"Length: {len(chunk['text'])}")
         print(chunk["text"])
-        
+
+    return text, chunks
+
 def verify_offsets(text, chunks):
     all_good = True
 
@@ -23,11 +26,16 @@ def verify_offsets(text, chunks):
         original = text[start:end]
         chunk_text = str(chunk["text"]).strip()
 
-        if original.strip() != chunk_text:
+        original_norm = normalize_chunk_text(original).strip()
+        chunk_norm = normalize_chunk_text(chunk_text).strip()
+
+        if original_norm != chunk_norm:
             print(f"\nOFFSET MISMATCH in chunk {i}")
             print(f"start={start}, end={end}")
             print("Original slice:")
             print(repr(original[:300]))
+            print("Normalized original:")
+            print(repr(original_norm[:300]))
             print("Chunk text:")
             print(repr(chunk_text[:300]))
             all_good = False
@@ -55,10 +63,14 @@ def run_validation_checks(text, chunks):
     print("\nValidation checks")
     print("-----------------")
 
+    if not chunks:
+        print("No chunks to validate.")
+        return
+
     offsets_ok = verify_offsets(text, chunks)
     print(f"Offsets valid: {offsets_ok}")
 
-    lengths = [len(str(c['text'])) for c in chunks]
+    lengths = [len(str(c["text"])) for c in chunks]
     too_small = sum(1 for x in lengths if x < 40)
     too_large = sum(1 for x in lengths if x > 400)
 
@@ -66,4 +78,8 @@ def run_validation_checks(text, chunks):
     print(f"Too many huge chunks? {'YES' if too_large > len(chunks) * 0.2 else 'NO'}")
 
 if __name__ == "__main__":
-    inspect("ml/data/test.pdf")
+    text, chunks = inspect("ml/data/test.pdf")
+    print()
+    analyze_chunks(chunks)
+    print()
+    run_validation_checks(text, chunks)
