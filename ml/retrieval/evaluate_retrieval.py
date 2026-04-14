@@ -23,6 +23,8 @@ from ml.retrieval.search_faiss import (
     resolve_faiss_dir,
     search_index,
 )
+from ml.retrieval.search_faiss_rerank import search_and_rerank
+from ml.retrieval.search_faiss_cross_rerank import search_and_cross_rerank
 
 
 # -------------------------------------------------------------------
@@ -33,6 +35,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_EVAL_DATASET_PATH = PROJECT_ROOT / "ml" / "retrieval" / "evaluate_dataset.json"
 DEFAULT_EXPERIMENT_NAME = "contract-retrieval-eval"
 DEFAULT_K_VALUES = [1, 3, 5, 10]
+DEFAULT_RETRIEVAL_MODE = "baseline"
 
 
 # -------------------------------------------------------------------
@@ -121,6 +124,67 @@ def maybe_log_mlflow(enabled: bool, params: dict[str, Any], metrics: dict[str, f
 
 
 # -------------------------------------------------------------------
+# Retrieval dispatch
+# -------------------------------------------------------------------
+
+def retrieve_chunk_ids(
+    query: str,
+    retrieval_mode: str,
+    faiss_input_path: Path,
+    embeddings_input_path: Path,
+    embedding_model_name: str,
+    top_k: int,
+    candidate_k: int,
+    cross_encoder_model_name: str,
+    cross_weight: float,
+    heuristic_weight: float,
+    shared_baseline_state: dict[str, Any] | None = None,
+) -> list[str]:
+    if retrieval_mode == "baseline":
+        if shared_baseline_state is None:
+            raise ValueError("shared_baseline_state is required for baseline retrieval.")
+
+        results = search_index(
+            query=query,
+            index=shared_baseline_state["index"],
+            metadata_rows=shared_baseline_state["metadata_rows"],
+            model=shared_baseline_state["model"],
+            top_k=top_k,
+        )
+        return [result.chunk_id for result in results]
+
+    if retrieval_mode == "heuristic":
+        results = search_and_rerank(
+            query=query,
+            faiss_input_path=faiss_input_path,
+            embeddings_input_path=embeddings_input_path,
+            embedding_model_name=embedding_model_name,
+            candidate_k=max(candidate_k, top_k),
+            top_k=top_k,
+        )
+        return [result.chunk_id for result in results]
+
+    if retrieval_mode == "hybrid":
+        results = search_and_cross_rerank(
+            query=query,
+            faiss_input_path=faiss_input_path,
+            embeddings_input_path=embeddings_input_path,
+            embedding_model_name=embedding_model_name,
+            cross_encoder_model_name=cross_encoder_model_name,
+            candidate_k=max(candidate_k, top_k),
+            top_k=top_k,
+            cross_weight=cross_weight,
+            heuristic_weight=heuristic_weight,
+        )
+        return [result.chunk_id for result in results]
+
+    raise ValueError(
+        f"Unsupported retrieval_mode={retrieval_mode}. "
+        f"Choose from: baseline, heuristic, hybrid."
+    )
+
+
+# -------------------------------------------------------------------
 # Evaluation
 # -------------------------------------------------------------------
 
@@ -130,18 +194,32 @@ def evaluate_queries(
     embeddings_input_path: Path,
     embedding_model_name: str,
     k_values: list[int],
+    retrieval_mode: str,
+    candidate_k: int,
+    cross_encoder_model_name: str,
+    cross_weight: float,
+    heuristic_weight: float,
 ) -> tuple[dict[str, float], list[dict[str, Any]]]:
     faiss_dir = resolve_faiss_dir(faiss_input_path)
     embeddings_dir = resolve_embeddings_dir(embeddings_input_path)
 
     logger.info("Using FAISS dir: %s", faiss_dir)
     logger.info("Using embeddings dir: %s", embeddings_dir)
-
-    index = load_faiss_index(faiss_dir)
-    metadata_rows = load_metadata(embeddings_dir)
-    model = load_embedding_model(embedding_model_name)
+    logger.info("Retrieval mode: %s", retrieval_mode)
 
     max_k = max(k_values)
+
+    shared_baseline_state: dict[str, Any] | None = None
+    if retrieval_mode == "baseline":
+        index = load_faiss_index(faiss_dir)
+        metadata_rows = load_metadata(embeddings_dir)
+        model = load_embedding_model(embedding_model_name)
+
+        shared_baseline_state = {
+            "index": index,
+            "metadata_rows": metadata_rows,
+            "model": model,
+        }
 
     per_query_results: list[dict[str, Any]] = []
 
@@ -154,19 +232,24 @@ def evaluate_queries(
         query = str(row["query"])
         relevant_chunk_ids = set(str(x) for x in row["relevant_chunk_ids"])
 
-        results = search_index(
+        retrieved_chunk_ids = retrieve_chunk_ids(
             query=query,
-            index=index,
-            metadata_rows=metadata_rows,
-            model=model,
+            retrieval_mode=retrieval_mode,
+            faiss_input_path=faiss_input_path,
+            embeddings_input_path=embeddings_input_path,
+            embedding_model_name=embedding_model_name,
             top_k=max_k,
+            candidate_k=candidate_k,
+            cross_encoder_model_name=cross_encoder_model_name,
+            cross_weight=cross_weight,
+            heuristic_weight=heuristic_weight,
+            shared_baseline_state=shared_baseline_state,
         )
-
-        retrieved_chunk_ids = [result.chunk_id for result in results]
 
         query_metrics = {
             "query_id": query_id,
             "query": query,
+            "retrieval_mode": retrieval_mode,
             "relevant_chunk_ids": sorted(relevant_chunk_ids),
             "retrieved_chunk_ids": retrieved_chunk_ids,
             "reciprocal_rank": reciprocal_rank(retrieved_chunk_ids, relevant_chunk_ids),
@@ -202,8 +285,22 @@ def evaluate_queries(
 # Output
 # -------------------------------------------------------------------
 
-def save_results_json(path: Path, metrics: dict[str, float], per_query_results: list[dict[str, Any]]) -> None:
+def save_results_json(
+    path: Path,
+    metrics: dict[str, float],
+    per_query_results: list[dict[str, Any]],
+    retrieval_mode: str,
+    candidate_k: int,
+    cross_encoder_model_name: str,
+    cross_weight: float,
+    heuristic_weight: float,
+) -> None:
     payload = {
+        "retrieval_mode": retrieval_mode,
+        "candidate_k": candidate_k,
+        "cross_encoder_model": cross_encoder_model_name,
+        "cross_weight": cross_weight,
+        "heuristic_weight": heuristic_weight,
         "aggregate_metrics": metrics,
         "per_query_results": per_query_results,
     }
@@ -214,9 +311,9 @@ def save_results_json(path: Path, metrics: dict[str, float], per_query_results: 
     logger.info("Saved evaluation results to: %s", path)
 
 
-def print_summary(metrics: dict[str, float]) -> None:
-    print("\nRetrieval evaluation summary")
-    print("---------------------------")
+def print_summary(metrics: dict[str, float], retrieval_mode: str) -> None:
+    print(f"\nRetrieval evaluation summary ({retrieval_mode})")
+    print("-------------------------------------------")
     for key, value in metrics.items():
         if key == "num_queries":
             print(f"{key}: {int(value)}")
@@ -258,6 +355,37 @@ def parse_args() -> argparse.Namespace:
         help="SentenceTransformer model used to encode the query.",
     )
     parser.add_argument(
+        "--retrieval-mode",
+        type=str,
+        choices=["baseline", "heuristic", "hybrid"],
+        default=DEFAULT_RETRIEVAL_MODE,
+        help="Retrieval mode to evaluate.",
+    )
+    parser.add_argument(
+        "--candidate-k",
+        type=int,
+        default=20,
+        help="Number of FAISS candidates to retrieve before reranking.",
+    )
+    parser.add_argument(
+        "--cross-encoder-model",
+        type=str,
+        default="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        help="Cross-encoder model used in hybrid mode.",
+    )
+    parser.add_argument(
+        "--cross-weight",
+        type=float,
+        default=0.5,
+        help="Weight for cross-encoder score in hybrid mode.",
+    )
+    parser.add_argument(
+        "--heuristic-weight",
+        type=float,
+        default=0.5,
+        help="Weight for heuristic score in hybrid mode.",
+    )
+    parser.add_argument(
         "--experiment-name",
         type=str,
         default=DEFAULT_EXPERIMENT_NAME,
@@ -281,11 +409,19 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
 
+    if args.candidate_k <= 0:
+        raise ValueError("--candidate-k must be > 0")
+
+    total_weight = args.cross_weight + args.heuristic_weight
+    if args.retrieval_mode == "hybrid" and total_weight <= 0:
+        raise ValueError("cross-weight + heuristic-weight must be > 0 for hybrid mode")
+
     eval_rows = load_eval_dataset(args.eval_dataset_path)
 
+    run_name = f"retrieval_eval_{args.retrieval_mode}"
     mlflow_run = maybe_start_mlflow_run(
         experiment_name=args.experiment_name,
-        run_name="retrieval_eval",
+        run_name=run_name,
         enabled=not args.disable_mlflow,
     )
 
@@ -296,10 +432,24 @@ def main() -> None:
             embeddings_input_path=args.embeddings_input_path,
             embedding_model_name=args.embedding_model,
             k_values=DEFAULT_K_VALUES,
+            retrieval_mode=args.retrieval_mode,
+            candidate_k=args.candidate_k,
+            cross_encoder_model_name=args.cross_encoder_model,
+            cross_weight=args.cross_weight,
+            heuristic_weight=args.heuristic_weight,
         )
 
-        print_summary(metrics)
-        save_results_json(args.output_json, metrics, per_query_results)
+        print_summary(metrics, args.retrieval_mode)
+        save_results_json(
+            path=args.output_json,
+            metrics=metrics,
+            per_query_results=per_query_results,
+            retrieval_mode=args.retrieval_mode,
+            candidate_k=args.candidate_k,
+            cross_encoder_model_name=args.cross_encoder_model,
+            cross_weight=args.cross_weight,
+            heuristic_weight=args.heuristic_weight,
+        )
 
         maybe_log_mlflow(
             enabled=not args.disable_mlflow,
@@ -308,6 +458,11 @@ def main() -> None:
                 "faiss_input_path": str(args.faiss_input_path),
                 "embeddings_input_path": str(args.embeddings_input_path),
                 "embedding_model": args.embedding_model,
+                "retrieval_mode": args.retrieval_mode,
+                "candidate_k": args.candidate_k,
+                "cross_encoder_model": args.cross_encoder_model,
+                "cross_weight": args.cross_weight,
+                "heuristic_weight": args.heuristic_weight,
             },
             metrics=metrics,
         )
