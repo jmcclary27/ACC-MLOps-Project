@@ -33,6 +33,7 @@ pymupdf-layout>=1.27.1
 spacy>=3.8.11
 # python -m spacy download en_core_web_sm
 anyascii>=0.3.3
+faiss-cpu>=1.7.4
 
 # -------------------------
 # Experiment Tracking / MLOps
