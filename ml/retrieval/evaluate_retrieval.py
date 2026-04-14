@@ -30,7 +30,7 @@ from ml.retrieval.search_faiss import (
 # -------------------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_EVAL_DATASET_PATH = PROJECT_ROOT / "ml" / "retrieval" / "eval_dataset.json"
+DEFAULT_EVAL_DATASET_PATH = PROJECT_ROOT / "ml" / "retrieval" / "evaluate_dataset.json"
 DEFAULT_EXPERIMENT_NAME = "contract-retrieval-eval"
 DEFAULT_K_VALUES = [1, 3, 5, 10]
 
