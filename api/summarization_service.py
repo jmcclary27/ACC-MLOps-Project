@@ -9,17 +9,24 @@ client = OpenAI()
 
 
 def build_summary_prompt(document_text: str) -> str:
-    trimmed_text = document_text[:16000]
+    trimmed_text = document_text[:10000]
 
     return f"""
-You are summarizing an uploaded contract for a user interface.
+You are generating a very short summary for a contract viewer UI.
 
-Using only the document text, produce:
-1. one sentence identifying the agreement
-2. one sentence stating the most important business/legal points
-3. one optional sentence only if there is an especially important term like termination, payment, governing law, arbitration, or confidentiality
+Using only the document text, write exactly 1 short paragraph of no more than 2 sentences.
 
-Keep the total summary under 120 words.
+Your goal is only to say:
+- what kind of agreement this is
+- who the parties are, if clear
+- what the agreement is generally about
+
+Do not list specific clauses unless absolutely necessary.
+Do not mention many details.
+Do not use bullet points.
+Do not use numbering.
+Do not use labels.
+Maximum 40 words.
 
 DOCUMENT:
 \"\"\"
@@ -38,7 +45,18 @@ def summarize_document(document_text: str) -> str:
         model="gpt-4o-mini",
         input=prompt,
         temperature=0.0,
+        max_output_tokens=60,
     )
 
     summary = response.output_text.strip()
-    return summary if summary else "No summary available."
+
+    if not summary:
+        return "No summary available."
+
+    summary = " ".join(summary.split())
+
+    for prefix in ("1. ", "2. ", "3. ", "- ", "* ", "Summary: "):
+        if summary.startswith(prefix):
+            summary = summary[len(prefix):].strip()
+
+    return summary
