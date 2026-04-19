@@ -1,49 +1,47 @@
-import React, { useMemo, useRef } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
-function formatConfidence(value) {
-  if (typeof value !== 'number') return 'N/A';
-  return `${(value * 100).toFixed(1)}%`;
-}
+function buildHighlightedSegments(text, citations, activeCitationIndex) {
+  if (!text) return [{ key: 'empty', text: '', highlighted: false, active: false }];
 
-function normalizeLabel(label) {
-  return label || 'Unknown';
-}
-
-function buildHighlightedSegments(text, clauses) {
-  if (!text) return [{ text: '', highlighted: false, clause: null }];
-
-  const validClauses = [...clauses]
+  const validCitations = [...citations]
+    .map((citation, index) => ({ ...citation, __index: index }))
     .filter(
-      (clause) =>
-        typeof clause.start_char === 'number' &&
-        typeof clause.end_char === 'number' &&
-        clause.start_char >= 0 &&
-        clause.end_char > clause.start_char &&
-        clause.end_char <= text.length
+      (citation) =>
+        typeof citation.start_char === 'number' &&
+        typeof citation.end_char === 'number' &&
+        citation.start_char >= 0 &&
+        citation.end_char > citation.start_char &&
+        citation.end_char <= text.length
     )
     .sort((a, b) => a.start_char - b.start_char);
+
+  if (validCitations.length === 0) {
+    return [{ key: 'plain-full', text, highlighted: false, active: false }];
+  }
 
   const segments = [];
   let cursor = 0;
 
-  validClauses.forEach((clause, index) => {
-    if (clause.start_char > cursor) {
+  validCitations.forEach((citation, index) => {
+    if (citation.start_char > cursor) {
       segments.push({
-        key: `plain-${cursor}-${clause.start_char}`,
-        text: text.slice(cursor, clause.start_char),
+        key: `plain-${cursor}-${citation.start_char}`,
+        text: text.slice(cursor, citation.start_char),
         highlighted: false,
-        clause: null,
+        active: false,
+        citation: null,
       });
     }
 
     segments.push({
-      key: `highlight-${index}-${clause.start_char}-${clause.end_char}`,
-      text: text.slice(clause.start_char, clause.end_char),
+      key: `highlight-${index}-${citation.start_char}-${citation.end_char}`,
+      text: text.slice(citation.start_char, citation.end_char),
       highlighted: true,
-      clause,
+      active: citation.__index === activeCitationIndex,
+      citation,
     });
 
-    cursor = clause.end_char;
+    cursor = citation.end_char;
   });
 
   if (cursor < text.length) {
@@ -51,63 +49,248 @@ function buildHighlightedSegments(text, clauses) {
       key: `plain-${cursor}-${text.length}`,
       text: text.slice(cursor),
       highlighted: false,
-      clause: null,
+      active: false,
+      citation: null,
     });
   }
 
   return segments;
 }
 
-function groupClausesByLabel(clauses) {
-  const grouped = clauses.reduce((acc, clause, index) => {
-    const label = normalizeLabel(clause.label);
-    if (!acc[label]) {
-      acc[label] = [];
-    }
-    acc[label].push({ ...clause, originalIndex: index });
-    return acc;
-  }, {});
+function ChatBubble({ message }) {
+  const isUser = message.role === 'user';
 
-  return Object.entries(grouped).sort((a, b) => {
-    if (b[1].length !== a[1].length) {
-      return b[1].length - a[1].length;
-    }
-    return a[0].localeCompare(b[0]);
-  });
+  return (
+    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
+      <div
+        className={
+          isUser
+            ? 'max-w-[85%] rounded-2xl rounded-br-md bg-blue-600 px-4 py-3 text-white shadow-sm'
+            : 'max-w-[85%] rounded-2xl rounded-bl-md bg-white px-4 py-3 text-slate-800 shadow-sm border border-slate-200'
+        }
+      >
+        <p className="whitespace-pre-wrap text-sm leading-6">{message.content}</p>
+      </div>
+    </div>
+  );
 }
 
-export default function DocumentPage({
-  fileName,
-  apiResults,
-  onBack,
-  confidenceThreshold,
-  onConfidenceThresholdChange,
+function CitationNavigator({
+  citations,
+  activeCitationIndex,
+  onPrevious,
+  onNext,
+  onJumpToCitation,
 }) {
-  const documentText = apiResults?.extracted_text || '';
-  const results = apiResults?.results || [];
+  if (!citations.length) return null;
 
-  const filteredResults = useMemo(() => {
-    return results.filter((item) => {
-      const confidence = typeof item.confidence === 'number' ? item.confidence : 0;
-      return confidence >= confidenceThreshold;
-    });
-  }, [results, confidenceThreshold]);
+  const activeCitation = citations[activeCitationIndex] || citations[0];
 
-  const groupedClauses = useMemo(() => {
-    return groupClausesByLabel(filteredResults);
-  }, [filteredResults]);
+  return (
+    <div className="sticky top-[88px] z-20 mx-6 mt-4 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 shadow-sm">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-amber-900">
+            Reference {Math.min(activeCitationIndex + 1, citations.length)} of {citations.length}
+          </p>
+          <p className="mt-1 text-sm text-amber-800 truncate">
+            {activeCitation?.text || ''}
+          </p>
+        </div>
 
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={onPrevious}
+            className="rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 transition-colors"
+          >
+            Previous
+          </button>
+          <button
+            onClick={() => onJumpToCitation(activeCitationIndex)}
+            className="rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 transition-colors"
+          >
+            Jump to active
+          </button>
+          <button
+            onClick={onNext}
+            className="rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100 transition-colors"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function DocumentPage({ fileName, documentData, onBack }) {
+  const [messages, setMessages] = useState(() => {
+    if (!documentData?.summary) return [];
+
+    return [
+      {
+        id: 'summary',
+        role: 'assistant',
+        content: documentData.summary,
+      },
+      {
+        id: 'prompt',
+        role: 'assistant',
+        content: 'Is there anything else you would like to know?',
+      },
+    ];
+  });
+
+  const [question, setQuestion] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState(null);
+
+  const [activeCitations, setActiveCitations] = useState([]);
+  const [activeCitationIndex, setActiveCitationIndex] = useState(0);
+
+  const chatContainerRef = useRef(null);
   const highlightRefs = useRef({});
 
-  const segments = useMemo(() => {
-    return buildHighlightedSegments(documentText, filteredResults);
-  }, [documentText, filteredResults]);
+  const documentText = documentData?.extracted_text || '';
+  const documentId = documentData?.document_id || '';
 
-  const scrollToClause = (clauseKey) => {
-    const element = highlightRefs.current[clauseKey];
+  useEffect(() => {
+    setMessages(
+      documentData?.summary
+        ? [
+            {
+              id: 'summary',
+              role: 'assistant',
+              content: documentData.summary,
+            },
+            {
+              id: 'prompt',
+              role: 'assistant',
+              content: 'Is there anything else you would like to know?',
+            },
+          ]
+        : []
+    );
+    setActiveCitations([]);
+    setActiveCitationIndex(0);
+    setQuestion('');
+    setChatError(null);
+  }, [documentData]);
+
+  useEffect(() => {
+    if (!chatContainerRef.current) return;
+    chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+  }, [messages, chatLoading]);
+
+  useEffect(() => {
+    if (!activeCitations.length) return;
+
+    const activeCitation = activeCitations[activeCitationIndex];
+    if (!activeCitation) return;
+
+    const key = `${activeCitation.start_char}-${activeCitation.end_char}-${activeCitation.chunk_id}`;
+    const element = highlightRefs.current[key];
+
     if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      element.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
     }
+  }, [activeCitationIndex, activeCitations]);
+
+  const highlightedSegments = useMemo(() => {
+    return buildHighlightedSegments(documentText, activeCitations, activeCitationIndex);
+  }, [documentText, activeCitations, activeCitationIndex]);
+
+  const handleAskQuestion = async (e) => {
+    e.preventDefault();
+
+    const trimmedQuestion = question.trim();
+    if (!trimmedQuestion || !documentId || chatLoading) return;
+
+    const userMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: trimmedQuestion,
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    setQuestion('');
+    setChatLoading(true);
+    setChatError(null);
+
+    try {
+      const response = await fetch('http://127.0.0.1:8000/qa', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          document_id: documentId,
+          question: trimmedQuestion,
+          top_k: 5,
+        }),
+      });
+
+      let data = null;
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
+      }
+
+      if (!response.ok) {
+        throw new Error(data?.error || data?.detail || 'Question failed');
+      }
+
+      const assistantMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: data?.answer || 'No answer returned.',
+      };
+
+      setMessages((prev) => [...prev, assistantMessage]);
+
+      const citations = Array.isArray(data?.citations) ? data.citations : [];
+      setActiveCitations(citations);
+      setActiveCitationIndex(0);
+    } catch (err) {
+      setChatError(err.message || 'Something went wrong');
+      console.error(err);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
+  const jumpToCitation = (index) => {
+    if (!activeCitations.length) return;
+
+    const safeIndex = ((index % activeCitations.length) + activeCitations.length) % activeCitations.length;
+    setActiveCitationIndex(safeIndex);
+
+    const citation = activeCitations[safeIndex];
+    if (!citation) return;
+
+    const key = `${citation.start_char}-${citation.end_char}-${citation.chunk_id}`;
+    const element = highlightRefs.current[key];
+
+    if (element) {
+      element.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    }
+  };
+
+  const goToPreviousCitation = () => {
+    if (!activeCitations.length) return;
+    jumpToCitation(activeCitationIndex - 1);
+  };
+
+  const goToNextCitation = () => {
+    if (!activeCitations.length) return;
+    jumpToCitation(activeCitationIndex + 1);
   };
 
   return (
@@ -115,10 +298,9 @@ export default function DocumentPage({
       <header className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
         <div>
           {fileName && <p className="text-sm text-slate-600">{fileName}</p>}
-          {apiResults?.num_predictions != null && (
+          {documentData?.chunk_count != null && (
             <p className="text-sm text-slate-500">
-              {apiResults.num_predictions} prediction
-              {apiResults.num_predictions === 1 ? '' : 's'}
+              {documentData.chunk_count} chunk{documentData.chunk_count === 1 ? '' : 's'}
             </p>
           )}
         </div>
@@ -132,78 +314,63 @@ export default function DocumentPage({
       </header>
 
       <div className="flex flex-1 min-h-0">
-        <main className="flex-1 bg-white overflow-auto border-r border-slate-200">
+        <main className="flex-1 bg-white overflow-auto border-r border-slate-200 relative">
           <div className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 backdrop-blur px-6 py-4">
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <h2 className="text-xl font-semibold text-slate-900">Document Viewer</h2>
-                <p className="text-sm text-slate-600">
-                  Highlighted clauses are shown based on the selected confidence threshold.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <label
-                  htmlFor="confidence-threshold"
-                  className="text-sm font-medium text-slate-700"
-                >
-                  Show clauses above:
-                </label>
-                <select
-                  id="confidence-threshold"
-                  value={confidenceThreshold}
-                  onChange={(e) => onConfidenceThresholdChange(Number(e.target.value))}
-                  className="rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm"
-                >
-                  <option value={0.7}>70%</option>
-                  <option value={0.8}>80%</option>
-                  <option value={0.9}>90%</option>
-                </select>
-              </div>
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900">Document Viewer</h2>
+              <p className="text-sm text-slate-600">
+                Ask questions in the sidebar and jump through highlighted references.
+              </p>
             </div>
           </div>
 
-          {!apiResults && (
+          <CitationNavigator
+            citations={activeCitations}
+            activeCitationIndex={activeCitationIndex}
+            onPrevious={goToPreviousCitation}
+            onNext={goToNextCitation}
+            onJumpToCitation={jumpToCitation}
+          />
+
+          {!documentData && (
             <div className="flex items-center justify-center h-full px-8">
               <p className="text-slate-500 text-lg">No document data available.</p>
             </div>
           )}
 
-          {apiResults && !documentText && (
+          {documentData && !documentText && (
             <div className="flex items-center justify-center h-full px-8">
               <p className="text-slate-500 text-lg">
-                The API did not return extracted document text, so highlights cannot be rendered.
+                The API did not return extracted document text.
               </p>
             </div>
           )}
 
-          {apiResults && documentText && (
+          {documentData && documentText && (
             <div className="p-6">
-              {filteredResults.length === 0 && (
-                <div className="mb-6 rounded-lg border border-yellow-200 bg-yellow-50 px-4 py-3 text-yellow-800">
-                  No clauses meet the selected confidence threshold.
-                </div>
-              )}
-
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 shadow-sm">
                 <div className="whitespace-pre-wrap break-words text-[15px] leading-7 text-slate-800">
-                  {segments.map((segment) => {
+                  {highlightedSegments.map((segment) => {
                     if (!segment.highlighted) {
                       return <span key={segment.key}>{segment.text}</span>;
                     }
 
-                    const clauseKey = `${segment.clause.start_char}-${segment.clause.end_char}-${segment.clause.label}`;
+                    const citationKey = `${segment.citation.start_char}-${segment.citation.end_char}-${segment.citation.chunk_id}`;
 
                     return (
                       <mark
                         key={segment.key}
                         ref={(node) => {
                           if (node) {
-                            highlightRefs.current[clauseKey] = node;
+                            highlightRefs.current[citationKey] = node;
                           }
                         }}
-                        className="rounded px-1 py-0.5 bg-yellow-200 text-slate-900"
-                        title={`${segment.clause.label} • ${formatConfidence(segment.clause.confidence)}`}
+                        className={
+                          segment.active
+                            ? 'rounded px-1 py-0.5 bg-yellow-300 text-slate-900 citation-active'
+                            : 'rounded px-1 py-0.5 bg-orange-200 text-slate-900 citation-match'
+                        }
+                        title={`${segment.citation.start_char}–${segment.citation.end_char}`}
                       >
                         {segment.text}
                       </mark>
@@ -215,73 +382,65 @@ export default function DocumentPage({
           )}
         </main>
 
-        <aside className="w-[420px] bg-slate-50 overflow-auto">
+        <aside className="w-[430px] bg-slate-50 flex flex-col min-h-0">
           <div className="p-5 border-b border-slate-200 bg-white sticky top-0 z-10">
-            <h2 className="text-xl font-semibold text-slate-900">Extracted Clauses</h2>
+            <h2 className="text-xl font-semibold text-slate-900">Contract Assistant</h2>
             <p className="text-sm text-slate-600 mt-1">
-              Grouped by label. Click a clause to jump to its highlighted text.
+              Ask questions about this document and review highlighted references.
             </p>
           </div>
 
-          <div className="p-4 space-y-4">
-            {!apiResults && (
+          <div
+            ref={chatContainerRef}
+            className="flex-1 min-h-0 overflow-auto p-4 space-y-4 soft-scroll"
+          >
+            {!messages.length && (
               <div className="rounded-lg border border-slate-200 bg-white p-4 text-slate-600">
-                No model output available.
+                No conversation available yet.
               </div>
             )}
 
-            {apiResults && results.length === 0 && (
-              <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-yellow-800">
-                The API returned no clause predictions.
-              </div>
-            )}
-
-            {apiResults && results.length > 0 && filteredResults.length === 0 && (
-              <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-4 text-yellow-800">
-                No clauses are visible at the current confidence threshold.
-              </div>
-            )}
-
-            {groupedClauses.map(([label, clauses]) => (
-              <div
-                key={label}
-                className="rounded-xl border border-slate-200 bg-white shadow-sm"
-              >
-                <div className="border-b border-slate-100 px-4 py-3">
-                  <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-700">
-                    {label} ({clauses.length})
-                  </h3>
-                </div>
-
-                <div className="divide-y divide-slate-100">
-                  {clauses.map((item) => {
-                    const clauseText = item.sentence || item.text || '';
-                    const clauseKey = `${item.start_char}-${item.end_char}-${item.label}`;
-
-                    return (
-                      <button
-                        key={clauseKey}
-                        onClick={() => scrollToClause(clauseKey)}
-                        className="w-full text-left px-4 py-3 hover:bg-blue-50 transition-colors"
-                      >
-                        <div className="flex items-start justify-between gap-3 mb-2">
-                          <span className="text-xs font-medium text-blue-700">
-                            {formatConfidence(item.confidence)}
-                          </span>
-                          <span className="text-xs text-slate-500">
-                            {item.start_char}–{item.end_char}
-                          </span>
-                        </div>
-
-                        <p className="text-sm leading-6 text-slate-800">
-                          {clauseText}
-                        </p>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+            {messages.map((message) => (
+              <ChatBubble key={message.id} message={message} />
             ))}
+
+            {chatLoading && (
+              <div className="flex justify-start">
+                <div className="max-w-[85%] rounded-2xl rounded-bl-md bg-white px-4 py-3 text-slate-800 shadow-sm border border-slate-200">
+                  <p className="text-sm leading-6">Thinking...</p>
+                </div>
+              </div>
+            )}
+
+            {chatError && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-700">
+                <p className="font-semibold text-sm">Request failed</p>
+                <p className="mt-1 text-sm">{chatError}</p>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-slate-200 bg-white p-4">
+            <form onSubmit={handleAskQuestion} className="space-y-3">
+              <textarea
+                value={question}
+                onChange={(e) => setQuestion(e.target.value)}
+                placeholder="Ask a question about this contract..."
+                className="w-full min-h-[96px] resize-none rounded-xl border border-slate-300 px-4 py-3 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-xs text-slate-500">
+                  Answers will highlight the cited sections in the document.
+                </p>
+                <button
+                  type="submit"
+                  disabled={chatLoading || !question.trim()}
+                  className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Send
+                </button>
+              </div>
+            </form>
           </div>
         </aside>
       </div>

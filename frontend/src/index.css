@@ -93,3 +93,12 @@
     transform: translateX(-50%);
   }
 }
+
+.citation-match {
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.citation-active {
+  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 0 0 2px rgba(234, 179, 8, 0.35);
+}
