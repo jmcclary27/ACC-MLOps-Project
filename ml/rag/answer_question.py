@@ -1,39 +1,55 @@
 from __future__ import annotations
 
-from typing import Any
+from pathlib import Path
 
 from ml.rag.prompting import build_grounded_prompt
 from ml.rag.schemas import Citation, RAGResponse
+from ml.retrieval.search_faiss_cross_rerank import search_and_cross_rerank
 
 
 def call_api_llm(prompt: str) -> str:
-    """
-    Replace this with your actual API LLM call.
-    It should return only the assistant's text response.
-    """
-    raise NotImplementedError("Hook up your API LLM here.")
+    # Replace this with your real API call
+    raise NotImplementedError
 
 
-def answer_question(
+def run_rag(
     question: str,
-    retrieved_chunks: list[dict[str, Any]],
+    top_k: int = 5,
+    candidate_k: int = 20,
 ) -> RAGResponse:
-    prompt = build_grounded_prompt(question, retrieved_chunks)
-    answer_text = call_api_llm(prompt).strip()
+    results = search_and_cross_rerank(
+        query=question,
+        faiss_input_path=Path("ml/data/processed/faiss"),
+        embeddings_input_path=Path("ml/data/processed/embeddings"),
+        embedding_model_name="sentence-transformers/all-MiniLM-L6-v2",
+        cross_encoder_model_name="cross-encoder/ms-marco-MiniLM-L-6-v2",
+        candidate_k=candidate_k,
+        top_k=top_k,
+    )
 
-    citations = [
+    if not results:
+        return RAGResponse(answer="not found", citations=[])
+
+    chunks = [
         Citation(
-            chunk_id=chunk["chunk_id"],
-            doc_id=chunk["doc_id"],
-            source_path=chunk["source_path"],
-            start_char=chunk["start_char"],
-            end_char=chunk["end_char"],
-            text=chunk["text"],
+            chunk_id=r.chunk_id,
+            doc_id=r.doc_id,
+            source_path=r.source_path,
+            start_char=r.start_char,
+            end_char=r.end_char,
+            text=r.text,
         )
-        for chunk in retrieved_chunks
+        for r in results
     ]
 
+    prompt = build_grounded_prompt(
+        question,
+        [chunk.model_dump() for chunk in chunks],
+    )
+
+    answer = call_api_llm(prompt).strip()
+
     return RAGResponse(
-        answer=answer_text,
-        citations=citations,
+        answer=answer if answer else "not found",
+        citations=chunks,
     )
