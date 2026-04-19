@@ -6,10 +6,22 @@ from ml.rag.prompting import build_grounded_prompt
 from ml.rag.schemas import Citation, RAGResponse
 from ml.retrieval.search_faiss_cross_rerank import search_and_cross_rerank
 
+from dotenv import load_dotenv
+load_dotenv()
+
+from openai import OpenAI
+
+client = OpenAI()
+
 
 def call_api_llm(prompt: str) -> str:
-    # Replace this with your real API call
-    raise NotImplementedError
+    response = client.responses.create(
+        model="gpt-4o-mini",
+        input=prompt,
+        temperature=0.0,
+    )
+
+    return response.output_text.strip()
 
 
 def run_rag(
