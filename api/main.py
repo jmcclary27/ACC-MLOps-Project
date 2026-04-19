@@ -3,14 +3,26 @@ from __future__ import annotations
 
 import io
 import logging
+import uuid
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 
-from api.model_loader import load_model
-from ml.inference import predict_document
+from api.document_store import StoredDocument, get_document, save_document
+from api.qa_service import answer_question_over_document
+from api.retrieval_service import embed_chunks, retrieve_top_chunks
+from api.schemas import (
+    DocumentStatusResponse,
+    DocumentUploadResponse,
+    QARequest,
+    QAResponse,
+    SearchRequest,
+    SearchResponse,
+    SearchResultResponse,
+)
+from api.summarization_service import summarize_document
+from ml.data.text_helpers import chunk_legal_text_with_offsets
 
 try:
     import fitz  # PyMuPDF
@@ -26,9 +38,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-app = FastAPI(title="MLOps Model Server")
-
+app = FastAPI(title="Contract RAG API")
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,32 +52,8 @@ app.add_middleware(
 )
 
 
-class DocumentRequest(BaseModel):
-    text: str
-
-
-def format_prediction_result(result: dict[str, object]) -> dict[str, object]:
-    """
-    Normalize a prediction result into the API response format.
-    """
-    return {
-        "sentence": result["text"],
-        "label": result["label"],
-        "confidence": result["confidence"],
-        "start_char": result["start_char"],
-        "end_char": result["end_char"],
-    }
-
-
-def format_prediction_results(results: list[dict[str, object]]) -> list[dict[str, object]]:
-    return [format_prediction_result(result) for result in results]
-
-
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
-    """
-    Return all expected API errors in a consistent format.
-    """
     message = exc.detail if isinstance(exc.detail, str) else "Request failed."
     return JSONResponse(
         status_code=exc.status_code,
@@ -77,9 +63,6 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """
-    Catch unexpected server errors so clients never see raw stack traces.
-    """
     logger.exception("Unhandled server error: %s", exc)
     return JSONResponse(
         status_code=500,
@@ -87,42 +70,11 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     )
 
 
-@app.on_event("startup")
-def startup_event() -> None:
-    """
-    Load the model once when the API starts.
-    This avoids first-request latency and catches bad model paths early.
-    """
-    logger.info("Starting API and loading model...")
-    load_model()
-    logger.info("API startup complete.")
-
-
 @app.get("/health")
 def health_check() -> dict[str, str]:
     return {
         "status": "ok",
         "message": "API is healthy.",
-    }
-
-
-@app.post("/clauses")
-def process_clauses(request: DocumentRequest) -> dict[str, object]:
-    """
-    Accept raw text and return model predictions.
-    Useful for Swagger testing or direct frontend text testing.
-    """
-    clean_text = request.text.strip()
-    if not clean_text:
-        raise HTTPException(status_code=400, detail="Input text is empty.")
-
-    results = predict_document(clean_text)
-    formatted_results = format_prediction_results(results)
-
-    return {
-        "source_type": "text",
-        "num_predictions": len(formatted_results),
-        "results": formatted_results,
     }
 
 
@@ -191,11 +143,8 @@ def extract_text(filename: str, file_bytes: bytes) -> str:
     )
 
 
-@app.post("/upload-contract")
-async def upload_contract(file: UploadFile = File(...)) -> dict[str, object]:
-    """
-    Upload a contract file, extract its text, run inference, and return results.
-    """
+@app.post("/documents", response_model=DocumentUploadResponse)
+async def upload_document(file: UploadFile = File(...)) -> DocumentUploadResponse:
     if not file.filename:
         raise HTTPException(
             status_code=400,
@@ -210,21 +159,124 @@ async def upload_contract(file: UploadFile = File(...)) -> dict[str, object]:
         )
 
     extracted_text = extract_text(file.filename, file_bytes)
-
     if not extracted_text:
         raise HTTPException(
             status_code=400,
             detail="Could not extract any text from the uploaded file.",
         )
 
-    results = predict_document(extracted_text)
-    formatted_results = format_prediction_results(results)
+    raw_chunks = chunk_legal_text_with_offsets(extracted_text)
+    if not raw_chunks:
+        raise HTTPException(
+            status_code=400,
+            detail="No usable chunks could be created from the uploaded document.",
+        )
 
-    return {
-        "source_type": "file",
-        "filename": file.filename,
-        "extracted_text": extracted_text,
-        "extracted_text_length": len(extracted_text),
-        "num_predictions": len(formatted_results),
-        "results": formatted_results,
-    }
+    document_id = f"doc_{uuid.uuid4().hex[:12]}"
+
+    chunks: list[dict[str, object]] = []
+    for i, chunk in enumerate(raw_chunks):
+        chunks.append(
+            {
+                "chunk_id": f"{document_id}_chunk_{i}",
+                "text": str(chunk["text"]),
+                "start_char": int(chunk["start_char"]),
+                "end_char": int(chunk["end_char"]),
+            }
+        )
+
+    chunk_texts = [str(chunk["text"]) for chunk in chunks]
+    embeddings = embed_chunks(chunk_texts)
+    summary = summarize_document(extracted_text)
+
+    stored_document = StoredDocument(
+        document_id=document_id,
+        filename=file.filename,
+        status="ready",
+        extracted_text=extracted_text,
+        summary=summary,
+        chunks=chunks,
+        embeddings=embeddings,
+    )
+
+    save_document(stored_document)
+
+    return DocumentUploadResponse(
+        document_id=document_id,
+        status="ready",
+        filename=file.filename,
+        text_length=len(extracted_text),
+        chunk_count=len(chunks),
+        summary=summary,
+        extracted_text=extracted_text,
+    )
+
+
+@app.get("/documents/{document_id}", response_model=DocumentStatusResponse)
+def get_document_status(document_id: str) -> DocumentStatusResponse:
+    document = get_document(document_id)
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found.",
+        )
+
+    return DocumentStatusResponse(
+        document_id=document.document_id,
+        status=document.status,
+        filename=document.filename,
+        text_length=len(document.extracted_text),
+        chunk_count=len(document.chunks),
+        summary=document.summary,
+        extracted_text=document.extracted_text,
+    )
+
+
+@app.post("/search", response_model=SearchResponse)
+def search_document(request: SearchRequest) -> SearchResponse:
+    document = get_document(request.document_id)
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found.",
+        )
+
+    results = retrieve_top_chunks(
+        document=document,
+        query=request.query,
+        top_k=request.top_k,
+        candidate_k=max(20, request.top_k),
+    )
+
+    return SearchResponse(
+        document_id=request.document_id,
+        query=request.query,
+        results=[
+            SearchResultResponse(
+                chunk_id=row.chunk_id,
+                score=row.rerank_score,
+                text=row.text,
+                start_char=row.start_char,
+                end_char=row.end_char,
+            )
+            for row in results
+        ],
+    )
+
+
+@app.post("/qa", response_model=QAResponse)
+def qa_document(request: QARequest) -> QAResponse:
+    document = get_document(request.document_id)
+    if document is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found.",
+        )
+
+    result = answer_question_over_document(
+        document=document,
+        question=request.question,
+        top_k=request.top_k,
+    )
+
+    return QAResponse(**result)
