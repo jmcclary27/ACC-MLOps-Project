@@ -9,6 +9,11 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from pathlib import Path
+
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
 from api.document_store import StoredDocument, get_document, save_document
 from api.qa_service import answer_question_over_document
 from api.retrieval_service import embed_chunks, retrieve_top_chunks
@@ -40,6 +45,10 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Contract RAG API")
 
+BASE_DIR = Path(__file__).resolve().parents[1]
+FRONTEND_DIST_DIR = BASE_DIR / "frontend_dist"
+ASSETS_DIR = FRONTEND_DIST_DIR / "assets"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -51,6 +60,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+if ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=ASSETS_DIR), name="assets")
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
@@ -76,6 +87,17 @@ def health_check() -> dict[str, str]:
         "status": "ok",
         "message": "API is healthy.",
     }
+
+@app.get("/{full_path:path}")
+def serve_spa(full_path: str):
+    if full_path.startswith("docs") or full_path.startswith("openapi") or full_path.startswith("redoc"):
+        raise HTTPException(status_code=404, detail="Not found.")
+
+    index_path = FRONTEND_DIST_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+
+    raise HTTPException(status_code=404, detail="Frontend not found.")
 
 
 def extract_text_from_txt(file_bytes: bytes) -> str:
