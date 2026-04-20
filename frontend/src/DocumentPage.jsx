@@ -221,7 +221,7 @@ export default function DocumentPage({ fileName, documentData, onBack }) {
     setChatError(null);
 
     try {
-      const response = await fetch('http://127.0.0.1:8000/qa', {
+      const response = await fetch('/qa', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
