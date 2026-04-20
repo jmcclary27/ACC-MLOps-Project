@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import DocumentPage from './DocumentPage';
 import uploadDocPng from './uploadDoc.png';
 
@@ -6,17 +6,11 @@ export default function App() {
   const [uploadedFile, setUploadedFile] = useState(null);
   const [view, setView] = useState('home');
 
-  const [apiResults, setApiResults] = useState(null);
+  const [documentData, setDocumentData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  const [confidenceThreshold, setConfidenceThreshold] = useState(0.8);
-
   const fileInputRef = useRef(null);
-
-  useEffect(() => {
-    return () => {};
-  }, []);
 
   const handleFileChange = async (e) => {
     const file = e.target.files?.[0];
@@ -25,13 +19,13 @@ export default function App() {
     setUploadedFile(file.name);
     setLoading(true);
     setError(null);
-    setApiResults(null);
+    setDocumentData(null);
 
     try {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch('http://127.0.0.1:8000/upload-contract', {
+      const response = await fetch('/documents', {
         method: 'POST',
         body: formData,
       });
@@ -47,7 +41,7 @@ export default function App() {
         throw new Error(data?.error || data?.detail || 'Upload failed');
       }
 
-      setApiResults(data);
+      setDocumentData(data);
       setView('viewer');
     } catch (err) {
       setError(err.message || 'Something went wrong');
@@ -60,9 +54,8 @@ export default function App() {
   const handleBack = () => {
     setView('home');
     setUploadedFile(null);
-    setApiResults(null);
+    setDocumentData(null);
     setError(null);
-    setConfidenceThreshold(0.8);
 
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -82,10 +75,8 @@ export default function App() {
       {view === 'viewer' ? (
         <DocumentPage
           fileName={uploadedFile}
-          apiResults={apiResults}
+          documentData={documentData}
           onBack={handleBack}
-          confidenceThreshold={confidenceThreshold}
-          onConfidenceThresholdChange={setConfidenceThreshold}
         />
       ) : (
         <>
@@ -111,8 +102,8 @@ export default function App() {
                   Contract AI
                 </h1>
                 <p className="mt-4 max-w-xl text-lg text-slate-800">
-                  Upload a contract and review highlighted clauses, grouped results,
-                  and confidence-filtered predictions.
+                  Upload a contract and chat with AI to get summaries, answers, and
+                  highlighted references directly in the document.
                 </p>
               </div>
 
@@ -133,16 +124,17 @@ export default function App() {
 
           <section className="flex flex-col items-center pt-12 pb-20 px-0 gap-10">
             <p className="max-w-3xl text-center text-xl text-slate-800 leading-relaxed">
-              Have a lease agreement, employment contract, or any legal document you want to
-              understand better? Upload it and let our AI assistant break down the key points,
-              obligations, and risks in plain language. No more legalese confusion, just clear
-              insights at your fingertips.
+              Upload a legal document and ask natural language questions about it.
+              The AI will summarize the contract, answer follow-up questions, and
+              point you to the exact referenced sections.
             </p>
 
             {loading && (
               <div className="rounded-lg border border-blue-200 bg-blue-50 px-5 py-4 text-blue-800">
-                <p className="text-lg font-medium">Uploading contract and running model...</p>
-                <p className="text-sm mt-1">Please wait while we extract text and detect clauses.</p>
+                <p className="text-lg font-medium">Uploading and preparing document...</p>
+                <p className="text-sm mt-1">
+                  Please wait while we extract text, build retrieval context, and generate a summary.
+                </p>
               </div>
             )}
 
